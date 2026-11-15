@@ -31,24 +31,32 @@ const rooms = [bedroom, {
 }, { id: 'living', name: 'Гостиная', width: 5, depth: 3.5, furniture: [] }];
 let room = bedroom;
 
-const STORAGE_KEY = 'roomory.ui.v2';
+const STORAGE_KEY = 'roomory.project.v1';
 let selectedId = 'wardrobe';
 let foundItemId = null;
 try {
   const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-  if (saved?.version === 2) {
-    room = rooms.find(candidate => candidate.id === saved.roomId) || bedroom;
+  if (saved?.version === 1 && validRooms(saved.rooms)) {
+    rooms.splice(0, rooms.length, ...saved.rooms);
+    room = rooms.find(candidate => candidate.id === saved.roomId) || rooms[0] || emptyProjectRoom();
     selectedId = room.furniture.find(f => f.id === saved.selectedId)?.id || room.furniture[0]?.id || null;
-  }
+  } else if (saved !== null) showStorageNotice();
 } catch { showStorageNotice(); }
+function emptyProjectRoom() { return { id: null, name: 'Нет комнат', width: 5, depth: 4, furniture: [] }; }
+function validRooms(value) {
+  const seen = new Set();
+  const idValid = id => typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && !seen.has(id) && (seen.add(id), true);
+  const numberValid = n => Number.isFinite(n) && n >= .1 && n <= 30;
+  return Array.isArray(value) && value.every(r => r && idValid(r.id) && typeof r.name === 'string' && r.name.trim() && numberValid(r.width) && numberValid(r.depth) && Array.isArray(r.furniture) && r.furniture.every(f => f && idValid(f.id) && typeof f.name === 'string' && numberValid(f.width) && numberValid(f.depth) && Number.isFinite(f.rotation) && f.rotation % 90 === 0 && Number.isFinite(f.x) && Number.isFinite(f.y) && fits(f, r) && Array.isArray(f.sections) && f.sections.every(section => section && typeof section.name === 'string' && Array.isArray(section.items) && section.items.every(item => item && typeof item.id === 'string' && typeof item.name === 'string' && Number.isFinite(item.quantity)))));
+}
 
 function showStorageNotice() {
   const status = document.querySelector('#storage-status');
   status.hidden = false;
-  status.textContent = 'Не удалось прочитать или сохранить выбор мебели. Остальные функции доступны.';
+  status.textContent = 'Не удалось прочитать или сохранить проект в браузере. Не закрывайте страницу, если хотите сохранить текущую работу.';
 }
 function saveSelection() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, roomId: room.id, selectedId })); }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, rooms, roomId: room.id, selectedId })); }
   catch { showStorageNotice(); }
 }
 function element(tag, className, text) {
@@ -65,11 +73,15 @@ function itemsOf(furniture) { return furniture.sections.flatMap(section => secti
 function renderPlan() {
   const plan = document.querySelector('#floor-plan');
   plan.style.aspectRatio = `${room.width} / ${room.depth}`;
+  plan.style.width = `min(100%, ${520 * room.width / room.depth}px)`;
+  plan.style.marginInline = 'auto';
   plan.style.backgroundSize = `${.5 / room.width * 100}% ${.5 / room.depth * 100}%`;
   plan.setAttribute('aria-label', `План комнаты ${room.name}. Выберите мебель`);
   document.querySelector('.dimension-top span').textContent = `${room.width} м`;
   document.querySelector('.dimension-left span').textContent = `${room.depth} м`;
   document.querySelector('#empty-room').hidden = room.furniture.length > 0;
+  document.querySelector('#empty-room h3').textContent = room.id ? 'Здесь начинается порядок' : 'Ваш дом начинается с комнаты';
+  document.querySelector('#empty-room p').textContent = room.id ? 'Разместите первый предмет мебели — укажите название и размеры, затем передвиньте его на плане.' : 'Создайте комнату, задайте её размеры и разместите мебель.';
   plan.classList.toggle('is-empty', !room.furniture.length);
   plan.querySelectorAll('.furniture').forEach(node => node.remove());
   room.furniture.forEach(furniture => {
@@ -84,7 +96,8 @@ function renderPlan() {
     button.append(element('span', 'furniture-name', furniture.name));
     const count = itemsOf(furniture).length;
     button.append(element('span', 'furniture-items', `${count} ${itemWord(count)}`));
-    button.addEventListener('click', () => selectFurniture(furniture.id));
+    button.addEventListener('click', () => { if (!button.suppressClick) selectFurniture(furniture.id); });
+    attachMovement(button, furniture);
     plan.append(button);
   });
 }
@@ -105,6 +118,7 @@ function renderDetails() {
   document.querySelector('.details-card').classList.toggle('has-no-selection', !furniture);
   document.querySelector('#empty-details').hidden = Boolean(furniture);
   if (!furniture) return;
+  document.querySelector('#object-position').textContent = `От левой стены: ${format(furniture.x)} м · от верхней: ${format(furniture.y)} м · поворот ${furniture.rotation}°`;
   document.querySelector('#furniture-number').textContent = `0${room.furniture.indexOf(furniture) + 1}`;
   document.querySelector('#furniture-name').textContent = furniture.name;
   const count = itemsOf(furniture).length;
@@ -185,7 +199,7 @@ search.addEventListener('keydown', event => {
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') results.hidden = true;
-  if (event.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); search.focus(); }
+  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open) { event.preventDefault(); search.focus(); }
 });
 document.addEventListener('click', event => { if (!event.target.closest('.search-section')) results.hidden = true; });
 function selectRoom(id) {
@@ -199,6 +213,10 @@ function selectRoom(id) {
   renderRoom();
 }
 function renderRoom() {
+  document.querySelector('#edit-room').disabled = !room.id;
+  document.querySelector('#new-furniture').disabled = !room.id;
+  document.querySelector('#back-to-bedroom').textContent = room.id ? 'Добавить мебель ＋' : 'Создать первую комнату ＋';
+  document.querySelector('.rooms-heading span').textContent = String(rooms.length).padStart(2, '0');
   const navigation = document.querySelector('#room-navigation');
   navigation.replaceChildren();
   rooms.forEach(candidate => {
@@ -206,7 +224,7 @@ function renderRoom() {
     button.type = 'button';
     if (candidate.id === room.id) button.setAttribute('aria-current', 'page');
     const label = element('span', 'room-tab-label', candidate.name);
-    label.append(element('small', '', `${(candidate.width * candidate.depth).toLocaleString('ru')} м² · ${candidate.furniture.length ? 'демокомната' : 'пустая комната'}`));
+    label.append(element('small', '', `${(candidate.width * candidate.depth).toLocaleString('ru')} м² · ${candidate.furniture.length ? 'мебель на плане' : 'пустая комната'}`));
     button.append(element('span', 'room-symbol', candidate.id === 'bedroom' ? '▧' : candidate.id === 'office' ? '▤' : '⌂'), label, element('span', 'room-count', candidate.furniture.length));
     button.addEventListener('click', () => selectRoom(candidate.id));
     navigation.append(button);
@@ -216,9 +234,147 @@ function renderRoom() {
   document.querySelector('.card-header p').textContent = `Вид сверху · ${room.width} × ${room.depth} м`;
   document.querySelector('#room-area').textContent = `${(room.width * room.depth).toLocaleString('ru')} м²`;
   const total = room.furniture.flatMap(itemsOf).length;
-  document.querySelector('#room-stats').textContent = `${room.furniture.length} ${room.furniture.length === 3 ? 'места' : 'мест'} хранения · ${total} ${itemWord(total)}`;
+  document.querySelector('#room-stats').textContent = `${room.furniture.length} ${room.furniture.length % 10 === 1 && room.furniture.length % 100 !== 11 ? 'место' : [2,3,4].includes(room.furniture.length % 10) && ![12,13,14].includes(room.furniture.length % 100) ? 'места' : 'мест'} хранения · ${total} ${itemWord(total)}`;
   renderPlan();
   renderDetails();
 }
-document.querySelector('#back-to-bedroom').addEventListener('click', () => selectRoom('bedroom'));
+document.querySelector('#back-to-bedroom').addEventListener('click', () => openEditor(room.id ? 'new-furniture' : 'new-room'));
+
+// Rectangle dimensions describe its current footprint. Rotation swaps width/depth.
+function fits(f, r) { return f.x >= 0 && f.y >= 0 && f.x + f.width <= r.width + 1e-8 && f.y + f.depth <= r.depth + 1e-8; }
+function format(n) { return n.toLocaleString('ru', { maximumFractionDigits: 2 }); }
+function notify(message) { document.querySelector('#editor-status').textContent = message; }
+function currentFurniture() { return room.furniture.find(f => f.id === selectedId); }
+function commit(message) { foundItemId = null; search.value = ''; results.hidden = true; saveSelection(); renderRoom(); notify(message); }
+function snapWithin(n, max) { return Math.max(0, Math.min(Math.round(n * 10) / 10, Math.floor((max + 1e-8) * 10) / 10)); }
+function moveObject(f, x, y) {
+  f.x = snapWithin(x, room.width - f.width);
+  f.y = snapWithin(y, room.depth - f.depth);
+}
+function focusFurniture() { document.querySelector(`.furniture[data-id="${selectedId}"]`)?.focus({ preventScroll: true }); }
+function attachMovement(button, f) {
+  button.style.touchAction = 'none';
+  let drag = null;
+  button.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    selectFurniture(f.id);
+    const plan = document.querySelector('#floor-plan');
+    drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, originalX: f.x, originalY: f.y, width: plan.clientWidth, depth: plan.clientHeight, moved: false };
+    button.setPointerCapture(event.pointerId);
+  });
+  button.addEventListener('pointermove', event => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    moveObject(f, drag.originalX + dx / drag.width * room.width, drag.originalY + dy / drag.depth * room.depth);
+    button.style.left = `${f.x / room.width * 100}%`;
+    button.style.top = `${f.y / room.depth * 100}%`;
+    renderDetails();
+  });
+  function finish(event, cancelled) {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const moved = drag.moved;
+    if (cancelled) { f.x = drag.originalX; f.y = drag.originalY; }
+    drag = null;
+    if (moved) { button.suppressClick = true; commit(cancelled ? 'Перемещение отменено.' : `${f.name}: положение сохранено.`); focusFurniture(); }
+  }
+  button.addEventListener('pointerup', event => finish(event, false));
+  button.addEventListener('pointercancel', event => finish(event, true));
+  button.addEventListener('keydown', event => {
+    const delta = { ArrowLeft: [-.1, 0], ArrowRight: [.1, 0], ArrowUp: [0, -.1], ArrowDown: [0, .1] }[event.key];
+    if (!delta) return;
+    event.preventDefault(); moveObject(f, f.x + delta[0], f.y + delta[1]); commit(`${f.name}: положение сохранено.`); focusFurniture();
+  });
+}
+const dialog = document.querySelector('#editor-dialog');
+const form = document.querySelector('#editor-form');
+let editorMode = null;
+let deletionAction = null;
+function openEditor(mode) {
+  editorMode = mode;
+  deletionAction = null;
+  const isRoom = mode.endsWith('room');
+  const existing = mode.startsWith('edit') ? (isRoom ? room : currentFurniture()) : null;
+  if (mode === 'edit-furniture' && !existing) return;
+  document.querySelector('#edit-fields').hidden = false;
+  document.querySelector('#dialog-title').textContent = ({ 'new-room': 'Новая комната', 'edit-room': 'Параметры комнаты', 'new-furniture': 'Новая мебель', 'edit-furniture': 'Параметры мебели' })[mode];
+  document.querySelector('#dialog-description').textContent = isRoom ? 'Размеры в метрах, от 0,1 до 30. При уменьшении вся мебель должна помещаться в новых границах.' : 'Размеры текущего положения на плане. Шаг перемещения — 10 см. Пересечение мебели допускается.';
+  document.querySelector('#edit-name').value = existing?.name || '';
+  document.querySelector('#edit-width').value = existing?.width || (isRoom ? 5 : 1);
+  document.querySelector('#edit-depth').value = existing?.depth || (isRoom ? 4 : .6);
+  document.querySelector('#edit-type').value = existing?.type || 'wardrobe';
+  document.querySelector('#type-label').hidden = isRoom;
+  document.querySelector('#delete-room').hidden = mode !== 'edit-room';
+  document.querySelector('#dialog-error').textContent = '';
+  document.querySelector('#save-dialog').textContent = existing ? 'Сохранить' : 'Создать';
+  document.querySelector('#save-dialog').classList.remove('danger-button');
+  dialog.showModal();
+  document.querySelector('#edit-name').focus();
+}
+function askDeletion(title, description, action) {
+  // Confirmation includes contents so destructive editing is explicit.
+  deletionAction = action;
+  document.querySelector('#dialog-title').textContent = title;
+  document.querySelector('#dialog-description').textContent = description;
+  document.querySelector('#edit-fields').hidden = true;
+  document.querySelector('#delete-room').hidden = true;
+  document.querySelector('#dialog-error').textContent = '';
+  document.querySelector('#save-dialog').textContent = 'Удалить';
+  document.querySelector('#save-dialog').classList.add('danger-button');
+  if (!dialog.open) dialog.showModal();
+  document.querySelector('#cancel-dialog').focus();
+}
+function rotateSelected() {
+  const f = currentFurniture(); if (!f) return;
+  const candidate = { ...f, width: f.depth, depth: f.width };
+  if (!fits(candidate, room)) { notify('Поворот не выполнен: мебель выйдет за границы. Сдвиньте её от стены или увеличьте комнату.'); return; }
+  Object.assign(f, candidate, { rotation: (f.rotation + 90) % 360 });
+  commit(`${f.name}: поворот на 90° сохранён.`);
+}
+for (const id of ['new-room', 'edit-room', 'new-furniture', 'edit-furniture']) document.querySelector(`#${id}`).addEventListener('click', () => openEditor(id));
+document.querySelector('#rotate-furniture').addEventListener('click', rotateSelected);
+for (const id of ['close-dialog', 'cancel-dialog']) document.querySelector(`#${id}`).addEventListener('click', () => dialog.close());
+document.querySelector('#delete-furniture').addEventListener('click', () => {
+  const f = currentFurniture(); if (!f) return;
+  askDeletion(`Удалить «${f.name}»?`, `Будут удалены мебель, все её отделения и вещи (${itemsOf(f).length} названий). Отменить удаление после подтверждения нельзя.`, () => {
+    room.furniture.splice(room.furniture.indexOf(f), 1); selectedId = room.furniture[0]?.id || null; commit('Мебель удалена.');
+  });
+});
+document.querySelector('#delete-room').addEventListener('click', () => {
+  const target = room;
+  askDeletion(`Удалить «${room.name}»?`, `Будет удалена комната со всей мебелью (${room.furniture.length}) и вещами (${room.furniture.flatMap(itemsOf).length} названий). Отменить удаление после подтверждения нельзя.`, () => {
+    rooms.splice(rooms.indexOf(target), 1); room = rooms[0] || emptyProjectRoom(); selectedId = room.furniture[0]?.id || null; commit('Комната удалена.');
+  });
+});
+document.querySelectorAll('[data-move]').forEach(button => button.addEventListener('click', () => {
+  const f = currentFurniture(); if (!f) return;
+  const [dx, dy] = { left: [-.1, 0], right: [.1, 0], up: [0, -.1], down: [0, .1] }[button.dataset.move];
+  moveObject(f, f.x + dx, f.y + dy); commit(`${f.name}: положение сохранено.`);
+}));
+form.addEventListener('submit', event => {
+  event.preventDefault();
+  if (deletionAction) { const action = deletionAction; deletionAction = null; action(); dialog.close(); return; }
+  const error = document.querySelector('#dialog-error');
+  const name = document.querySelector('#edit-name').value.trim();
+  const width = document.querySelector('#edit-width').valueAsNumber;
+  const depth = document.querySelector('#edit-depth').valueAsNumber;
+  if (!name || name.length > 60) { error.textContent = 'Введите название от 1 до 60 символов.'; return; }
+  if (![width, depth].every(n => Number.isFinite(n) && n >= .1 && n <= 30)) { error.textContent = 'Укажите оба размера от 0,1 до 30 метров.'; return; }
+  if (editorMode === 'new-room') {
+    room = { id: `room-${crypto.randomUUID()}`, name, width, depth, furniture: [] }; rooms.push(room); selectedId = null;
+  } else if (editorMode === 'edit-room') {
+    const conflicts = room.furniture.filter(f => !fits(f, { width, depth }));
+    if (conflicts.length) { error.textContent = `Изменения не сохранены. За новыми границами: ${conflicts.map(f => f.name).join(', ')}. Сначала переместите или уменьшите эту мебель либо увеличьте размеры комнаты.`; return; }
+    Object.assign(room, { name, width, depth });
+  } else {
+    const existing = editorMode === 'edit-furniture' ? currentFurniture() : null;
+    const candidate = { x: existing?.x || 0, y: existing?.y || 0, width, depth };
+    if (!fits(candidate, room)) { error.textContent = 'Мебель не помещается в комнате в этом положении. Уменьшите размеры или сначала переместите её.'; return; }
+    const type = document.querySelector('#edit-type').value;
+    if (existing) Object.assign(existing, { name, width, depth, type });
+    else { const f = { id: `furniture-${crypto.randomUUID()}`, name, type, ...candidate, rotation: 0, sections: [] }; room.furniture.push(f); selectedId = f.id; }
+  }
+  dialog.close(); commit('Изменения сохранены в этом браузере.');
+});
 renderRoom();
