@@ -29,7 +29,19 @@ const rooms = [bedroom, {
     { id: 'office-cabinet', name: 'Комод', type: 'dresser', x: 2.5, y: 2.15, width: 1.2, depth: .65, rotation: 0, sections: [] },
   ],
 }, { id: 'living', name: 'Гостиная', width: 5, depth: 3.5, furniture: [] }];
+// Two independent shelves at one floor-plan footprint demonstrate vertical storage.
+rooms[1].furniture.push(
+  { id: 'demo-shelf-lower', name: 'Нижняя полка', type: 'shelf', x: 1.3, y: 0, width: 1.4, depth: .25, rotation: 0, wall: 'north', height: .08, elevation: 1.2, sections: [{ name: 'На полке', items: [{ id: 'demo-shelf-camera', name: 'Фотоаппарат', quantity: 1, note: 'Нижняя полка', icon: '▣' }] }] },
+  { id: 'demo-shelf-upper', name: 'Верхняя полка', type: 'shelf', x: 1.3, y: 0, width: 1.4, depth: .25, rotation: 0, wall: 'north', height: .08, elevation: 1.8, sections: [{ name: 'На полке', items: [{ id: 'demo-shelf-box', name: 'Архивные документы', quantity: 1, note: 'В серой коробке', icon: '▤' }] }] }
+);
 let room = bedroom;
+let viewMode = 'top';
+let activeWall = 'north';
+let homeOpen = false;
+let movingId = null;
+let lastRouteKey = null;
+let lastSpaceKey = null;
+const WG = RoomoryWallGeometry;
 
 const STORAGE_KEY = 'roomory.project.v1';
 let selectedId = 'wardrobe';
@@ -81,12 +93,12 @@ function renderPlan() {
   document.querySelector('.dimension-top span').textContent = `${room.width} м`;
   document.querySelector('.dimension-left span').textContent = `${room.depth} м`;
   document.querySelector('#empty-room').hidden = room.furniture.length > 0;
-  document.querySelector('#empty-room h3').textContent = room.id ? 'Здесь начинается порядок' : 'Ваш дом начинается с комнаты';
+  document.querySelector('#empty-room h3').textContent = room.id ? 'Нет мебели' : 'Нет комнат';
   document.querySelector('#empty-room p').textContent = room.id ? 'Разместите первый предмет мебели — укажите название и размеры, затем передвиньте его на плане.' : 'Создайте комнату, задайте её размеры и разместите мебель.';
   plan.classList.toggle('is-empty', !room.furniture.length);
   plan.querySelectorAll('.furniture').forEach(node => node.remove());
   room.furniture.forEach(furniture => {
-    const button = element('button', `furniture ${furniture.type}`);
+    const button = element('button', `furniture ${furniture.type}${furniture.type === 'shelf' && WG.heightOf(furniture) < .3 ? ' is-floating' : ''}`);
     button.type = 'button';
     button.dataset.id = furniture.id;
     button.style.left = `${furniture.x / room.width * 100}%`;
@@ -97,24 +109,33 @@ function renderPlan() {
     button.append(element('span', 'furniture-name', furniture.name));
     const count = itemsOf(furniture).length;
     button.append(element('span', 'furniture-items', `${count} ${itemWord(count)}`));
+    const levels = room.furniture.filter(other => Math.abs(other.x - furniture.x) < .01 && Math.abs(other.y - furniture.y) < .01 && Math.abs(other.width - furniture.width) < .01 && Math.abs(other.depth - furniture.depth) < .01);
+    if (levels.length > 1) { button.classList.add('is-stacked'); button.dataset.levels = String(levels.length); }
+    if (levels.length > 1) button.append(element('span', 'level-badge', `${levels.length} уровня`));
     button.addEventListener('click', () => { if (!button.suppressClick) selectFurniture(furniture.id); });
     attachMovement(button, furniture);
     plan.append(button);
   });
 }
 function selectFurniture(id, itemId = null) {
+  if (selectedId !== id) movingId = null;
   selectedId = id;
   foundItemId = itemId;
   saveSelection();
   renderDetails();
+  renderWallView();
 }
 function renderDetails() {
   const furniture = room.furniture.find(f => f.id === selectedId);
-  document.querySelectorAll('.furniture').forEach(button => {
+  document.querySelectorAll('.furniture, .wall-object, .mini-object').forEach(button => {
     const selected = button.dataset.id === selectedId;
     button.classList.toggle('is-selected', selected);
     button.classList.toggle('is-match', selected && foundItemId !== null);
     button.setAttribute('aria-pressed', String(selected));
+    const unlocked = movingId === button.dataset.id;
+    button.classList.toggle('is-movable', unlocked);
+    if (button.matches('.furniture, .wall-object')) button.style.touchAction = unlocked ? 'none' : 'auto';
+    if (button.matches('.furniture.is-stacked')) { const f = room.furniture.find(item => item.id === button.dataset.id); button.querySelector('.furniture-name').textContent = selected ? f.name : `Полки: ${button.dataset.levels}`; }
   });
   const detailsPanel = document.querySelector('.details-card');
   detailsPanel.removeAttribute('aria-labelledby');
@@ -122,7 +143,21 @@ function renderDetails() {
   detailsPanel.classList.toggle('has-no-selection', !furniture);
   document.querySelector('#empty-details').hidden = Boolean(furniture);
   if (!furniture) return;
-  document.querySelector('#object-position').textContent = `От левой стены: ${format(furniture.x)} м · от верхней: ${format(furniture.y)} м · поворот ${furniture.rotation}°`;
+  const moving = movingId === furniture.id;
+  document.querySelector('#toggle-move').textContent = moving ? 'Зафиксировать' : 'Переместить';
+  document.querySelector('#toggle-move').setAttribute('aria-pressed', String(moving));
+  document.querySelector('#move-hint').textContent = moving ? 'Перетаскивайте предмет или используйте стрелки. Шаг — 10 см.' : 'Расположение зафиксировано.';
+  document.querySelectorAll('[data-move]').forEach(button => { button.disabled = !moving; });
+  document.querySelector('#rotate-furniture').disabled = !moving;
+  document.querySelector('#object-position').textContent = `${furniture.wall ? WG.labels[furniture.wall] + ' · ' : ''}От пола: ${format(furniture.elevation ?? 0)} м · высота: ${format(WG.heightOf(furniture))} м`;
+  document.querySelector('#show-object-wall').hidden = !furniture.wall;
+  const stacked = document.querySelector('#stacked-items'); stacked.replaceChildren();
+  const neighbours = room.furniture.filter(f => f.x < furniture.x + furniture.width && f.x + f.width > furniture.x && f.y < furniture.y + furniture.depth && f.y + f.depth > furniture.y && f.wall && f.wall === furniture.wall);
+  stacked.hidden = neighbours.length < 2;
+  if (neighbours.length > 1) {
+    stacked.append(element('p', '', 'На этом участке стены'));
+    neighbours.sort((a,b) => (a.elevation || 0) - (b.elevation || 0)).forEach(f => { const b = element('button', '', `${f.name} · ${format(f.elevation || 0)} м`); b.type='button'; b.setAttribute('aria-pressed', String(f.id === selectedId)); b.addEventListener('click', () => { viewMode='wall'; activeWall=f.wall; selectFurniture(f.id); }); stacked.append(b); });
+  }
   document.querySelector('#furniture-number').textContent = `0${room.furniture.indexOf(furniture) + 1}`;
   document.querySelector('#furniture-name').textContent = furniture.name;
   const count = itemsOf(furniture).length;
@@ -201,14 +236,15 @@ function renderSearch() {
   matches.forEach(({ matchRoom, furniture, section, item }) => {
     const button = element('button', 'search-result');
     button.type = 'button';
-    button.append(element('strong', '', item.name), element('small', '', `${matchRoom.name} → ${furniture.name} → ${section.name}`));
+    button.append(element('strong', '', item.name), element('small', '', `${matchRoom.name} → ${furniture.name} → ${section.name}${furniture.wall ? ` · ${WG.labels[furniture.wall]}, ${format(furniture.elevation ?? 0)} м от пола` : ''}`));
     button.addEventListener('click', () => {
-      room = matchRoom;
+      movingId = null; room = matchRoom; homeOpen = false;
+      viewMode = furniture.wall ? 'wall' : 'top'; if (furniture.wall) activeWall = furniture.wall;
       renderRoom();
       selectFurniture(furniture.id, item.id);
       results.hidden = true;
       document.querySelector('#search-status').textContent = `${item.name}: ${room.name}, ${furniture.name}, ${section.name}`;
-      document.querySelector(`.furniture[data-id="${furniture.id}"]`).focus({ preventScroll: true });
+      focusFurniture();
       document.querySelector('.item.is-found')?.scrollIntoView({ behavior: 'instant', block: 'center' });
     });
     results.append(button);
@@ -231,6 +267,8 @@ document.addEventListener('keydown', event => {
 });
 document.addEventListener('click', event => { if (!event.target.closest('.search-section')) results.hidden = true; });
 function selectRoom(id) {
+  movingId = null;
+  homeOpen = false; viewMode = 'top';
   room = rooms.find(candidate => candidate.id === id);
   selectedId = room.furniture[0]?.id || null;
   foundItemId = null;
@@ -245,7 +283,7 @@ function renderRoom() {
   document.querySelector('.empty-details p').textContent = room.id ? 'Выберите мебель на плане — здесь появятся её отделения и содержимое.' : 'Сначала создайте комнату и добавьте мебель.';
   document.querySelector('#edit-room').disabled = !room.id;
   document.querySelector('#new-furniture').disabled = !room.id;
-  document.querySelector('#back-to-bedroom').textContent = room.id ? 'Добавить мебель ＋' : 'Создать первую комнату ＋';
+  document.querySelector('#back-to-bedroom').textContent = room.id ? 'Добавить мебель ＋' : 'Перейти в «Мой дом»';
   document.querySelector('.rooms-heading span').textContent = String(rooms.length).padStart(2, '0');
   const navigation = document.querySelector('#room-navigation');
   navigation.replaceChildren();
@@ -268,8 +306,11 @@ function renderRoom() {
   document.querySelector('#room-stats').textContent = `${room.furniture.length} ${room.furniture.length % 10 === 1 && room.furniture.length % 100 !== 11 ? 'место' : [2,3,4].includes(room.furniture.length % 10) && ![12,13,14].includes(room.furniture.length % 100) ? 'места' : 'мест'} хранения · ${total} ${itemWord(total)}`;
   renderPlan();
   renderDetails();
+  renderWallView();
+  renderHome();
+  animateNavigation();
 }
-document.querySelector('#back-to-bedroom').addEventListener('click', () => openEditor(room.id ? 'new-furniture' : 'new-room'));
+document.querySelector('#back-to-bedroom').addEventListener('click', () => { if (room.id) openEditor('new-furniture'); else { homeOpen = true; renderRoom(); document.querySelector('#new-room').focus(); } });
 
 // Rectangle dimensions describe its current footprint. Rotation swaps width/depth.
 function fits(f, r) { return f.x >= 0 && f.y >= 0 && f.x + f.width <= r.width + 1e-8 && f.y + f.depth <= r.depth + 1e-8; }
@@ -281,14 +322,16 @@ function snapWithin(n, max) { return Math.max(0, Math.min(Math.round(n * 10) / 1
 function moveObject(f, x, y) {
   f.x = snapWithin(x, room.width - f.width);
   f.y = snapWithin(y, room.depth - f.depth);
+  if (f.wall) Object.assign(f, WG.pin(f, room));
 }
-function focusFurniture() { document.querySelector(`.furniture[data-id="${selectedId}"]`)?.focus({ preventScroll: true }); }
+function focusFurniture() { document.querySelector(`${viewMode === 'wall' ? '.wall-object' : '.furniture'}[data-id="${selectedId}"]`)?.focus({ preventScroll: true }); }
 function attachMovement(button, f) {
-  button.style.touchAction = 'none';
+  button.style.touchAction = movingId === f.id ? 'none' : 'auto';
   let drag = null;
   button.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
     selectFurniture(f.id);
+    if (movingId !== f.id) return;
     const plan = document.querySelector('#floor-plan');
     drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, originalX: f.x, originalY: f.y, width: plan.clientWidth, depth: plan.clientHeight, moved: false };
     button.setPointerCapture(event.pointerId);
@@ -314,7 +357,7 @@ function attachMovement(button, f) {
   button.addEventListener('pointercancel', event => finish(event, true));
   button.addEventListener('keydown', event => {
     const delta = { ArrowLeft: [-.1, 0], ArrowRight: [.1, 0], ArrowUp: [0, -.1], ArrowDown: [0, .1] }[event.key];
-    if (!delta) return;
+    if (!delta || movingId !== f.id) return;
     event.preventDefault(); moveObject(f, f.x + delta[0], f.y + delta[1]); commit(`${f.name}: положение сохранено.`); focusFurniture();
   });
 }
@@ -336,6 +379,14 @@ function openEditor(mode) {
   document.querySelector('#edit-depth').value = existing?.depth || (isRoom ? 4 : .6);
   document.querySelector('#edit-type').value = existing?.type || 'wardrobe';
   document.querySelector('#type-label').hidden = isRoom;
+  document.querySelector('#elevation-label').hidden = isRoom;
+  document.querySelector('#wall-field-label').hidden = isRoom;
+  document.querySelector('#edit-height').min = isRoom ? '.5' : '.05';
+  document.querySelector('#edit-height').value = isRoom ? WG.ceiling(existing || room) : existing ? WG.heightOf(existing) : 1;
+  document.querySelector('#edit-elevation').value = existing?.elevation ?? 0;
+  document.querySelector('#edit-wall').value = existing?.wall || (!isRoom && viewMode === 'wall' ? activeWall : '');
+  document.querySelector('#edit-elevation').disabled = Boolean(existing && !isRoom && movingId !== existing.id);
+  document.querySelector('#edit-wall').disabled = Boolean(existing && !isRoom && movingId !== existing.id);
   document.querySelector('#delete-room').hidden = mode !== 'edit-room';
   document.querySelector('#dialog-error').textContent = '';
   document.querySelector('#save-dialog').textContent = existing ? 'Сохранить' : 'Создать';
@@ -357,8 +408,8 @@ function askDeletion(title, description, action) {
   document.querySelector('#cancel-dialog').focus();
 }
 function rotateSelected() {
-  const f = currentFurniture(); if (!f) return;
-  const candidate = { ...f, width: f.depth, depth: f.width };
+  const f = currentFurniture(); if (!f || movingId !== f.id) return;
+  const candidate = WG.pin({ ...f, width: f.depth, depth: f.width }, room);
   if (!fits(candidate, room)) { notify('Поворот не выполнен: мебель выйдет за границы. Сдвиньте её от стены или увеличьте комнату.'); return; }
   Object.assign(f, candidate, { rotation: (f.rotation + 90) % 360 });
   commit(`${f.name}: поворот на 90° сохранён.`);
@@ -381,9 +432,9 @@ document.querySelector('#delete-room').addEventListener('click', () => {
   });
 });
 document.querySelectorAll('[data-move]').forEach(button => button.addEventListener('click', () => {
-  const f = currentFurniture(); if (!f) return;
+  const f = currentFurniture(); if (!f || movingId !== f.id) return;
   const [dx, dy] = { left: [-.1, 0], right: [.1, 0], up: [0, -.1], down: [0, .1] }[button.dataset.move];
-  moveObject(f, f.x + dx, f.y + dy); commit(`${f.name}: положение сохранено.`);
+  if (viewMode === 'wall' && f.wall === activeWall) moveOnWall(f, dx, -dy); else moveObject(f, f.x + dx, f.y + dy); commit(`${f.name}: положение сохранено.`);
 }));
 form.addEventListener('submit', event => {
   event.preventDefault();
@@ -394,20 +445,29 @@ form.addEventListener('submit', event => {
   const depth = document.querySelector('#edit-depth').valueAsNumber;
   if (!name || name.length > 60) { error.textContent = 'Введите название от 1 до 60 символов.'; return; }
   if (![width, depth].every(n => Number.isFinite(n) && n >= .1 && n <= 30)) { error.textContent = 'Укажите оба размера от 0,1 до 30 метров.'; return; }
+  const height = document.querySelector('#edit-height').valueAsNumber;
+  const elevation = document.querySelector('#edit-elevation').valueAsNumber;
+  const wall = document.querySelector('#edit-wall').value || null;
+  const isRoom = editorMode.endsWith('room');
+  if (!Number.isFinite(height) || height < (isRoom ? .5 : .05) || height > 10) { error.textContent = isRoom ? 'Высота стен: от 0,5 до 10 м.' : 'Высота предмета: от 0,05 до 10 м.'; return; }
+  if (!isRoom && (!Number.isFinite(elevation) || elevation < 0 || elevation + height > WG.ceiling(room) + 1e-8)) { error.textContent = 'Высота предмета и отступ от пола должны помещаться под потолком.'; return; }
   if (editorMode === 'new-room') {
-    room = { id: `room-${crypto.randomUUID()}`, name, width, depth, furniture: [] }; rooms.push(room); selectedId = null;
+    room = { id: `room-${crypto.randomUUID()}`, name, width, depth, wallHeight: height, furniture: [] }; rooms.push(room); selectedId = null; homeOpen = false; viewMode = 'top';
   } else if (editorMode === 'edit-room') {
-    const conflicts = room.furniture.filter(f => !fits(f, { width, depth }));
+    const resized = { ...room, width, depth, wallHeight: height };
+    const conflicts = room.furniture.filter(f => !WG.valid(WG.pin(f, resized), resized));
     if (conflicts.length) { error.textContent = `Изменения не сохранены. За новыми границами: ${conflicts.map(f => f.name).join(', ')}. Сначала переместите или уменьшите эту мебель либо увеличьте размеры комнаты.`; return; }
-    Object.assign(room, { name, width, depth });
+    Object.assign(room, { name, width, depth, wallHeight: height });
+    room.furniture.forEach(f => Object.assign(f, WG.pin(f, room)));
   } else {
     const existing = editorMode === 'edit-furniture' ? currentFurniture() : null;
-    const candidate = { x: existing?.x || 0, y: existing?.y || 0, width, depth };
+    const candidate = WG.pin({ x: existing?.x || 0, y: existing?.y || 0, width, depth, wall, height, elevation }, room);
     if (!fits(candidate, room)) { error.textContent = 'Мебель не помещается в комнате в этом положении. Уменьшите размеры или сначала переместите её.'; return; }
     const type = document.querySelector('#edit-type').value;
-    if (existing) Object.assign(existing, { name, width, depth, type });
+    if (existing) Object.assign(existing, candidate, { name, type });
     else { const f = { id: `furniture-${crypto.randomUUID()}`, name, type, ...candidate, rotation: 0, sections: [] }; room.furniture.push(f); selectedId = f.id; }
   }
+  if (!isRoom && wall) { activeWall = wall; }
   dialog.close(); commit('Изменения сохранены в этом браузере.');
 });
 
@@ -469,7 +529,8 @@ document.querySelector('#content-form').addEventListener('submit', event => {
         location.section.items.push(contentTarget);
       }
     } else location.section.items.push({ id: `item-${crypto.randomUUID()}`, name, quantity, note, icon: '▣' });
-    room = location.room; selectedId = location.furniture.id;
+    room = location.room; selectedId = location.furniture.id; homeOpen = false;
+    if (location.furniture.wall) { activeWall = location.furniture.wall; viewMode = 'wall'; } else viewMode = 'top';
   }
   contentDialog.close(); commit('Содержимое сохранено в этом браузере.');
 });
@@ -536,9 +597,190 @@ document.querySelector('#confirm-import').addEventListener('click', () => {
     // Persist first: a quota/storage error leaves the current in-memory project intact.
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch { document.querySelector('#import-error').textContent = 'Браузер не смог сохранить копию. Проект не заменён. Освободите место или разрешите локальное хранение.'; return; }
+  movingId = null;
   rooms.splice(0, rooms.length, ...next.rooms);
   room = rooms.find(candidate => candidate.id === next.roomId) || emptyProjectRoom(); selectedId = next.selectedId;
   pendingImport = null; importDialog.close(); storageReadFailed = false; document.querySelector('#storage-status').hidden = true;
   commit('Резервная копия восстановлена. Комнаты, мебель и вещи сохранены в браузере.');
 });
+
+// Both views edit the same furniture records; a wall is a projection, not a copy.
+function moveOnWall(f, du, dz) {
+  const p = WG.project(f, room);
+  const u = snapWithin(p.u + du, WG.length(room, f.wall) - p.span);
+  const z = snapWithin(p.z + dz, WG.ceiling(room) - p.height);
+  Object.assign(f, WG.fromWall(f, room, u, z));
+}
+function wallButton(wall, className) {
+  const button = element('button', className, WG.labels[wall].slice(-1));
+  button.type = 'button'; button.dataset.wall = wall;
+  button.setAttribute('aria-label', `Проработать: ${WG.labels[wall]}`);
+  button.title = WG.labels[wall];
+  button.addEventListener('click', () => { activeWall = wall; viewMode = 'wall'; homeOpen = false; renderRoom(); });
+  return button;
+}
+function drawMiniPlan(container, targetRoom, interactive = true) {
+  container.replaceChildren(); container.style.aspectRatio = `${targetRoom.width} / ${targetRoom.depth}`;
+  targetRoom.furniture.forEach(f => {
+    const node = element(interactive ? 'button' : 'span', `mini-object${f.id === selectedId && targetRoom === room ? ' is-selected' : ''}`);
+    node.dataset.id = f.id;
+    node.style.left = `${f.x / targetRoom.width * 100}%`; node.style.top = `${f.y / targetRoom.depth * 100}%`;
+    node.style.width = `${f.width / targetRoom.width * 100}%`; node.style.height = `${f.depth / targetRoom.depth * 100}%`;
+    if (interactive) { node.type = 'button'; node.setAttribute('aria-label', `На плане: ${f.name}`); node.addEventListener('click', () => { if (f.wall) activeWall = f.wall; selectFurniture(f.id); }); }
+    container.append(node);
+  });
+  if (interactive) Object.keys(WG.labels).forEach(wall => container.append(wallButton(wall, `mini-wall side-${wall}${activeWall === wall ? ' active' : ''}`)));
+}
+function renderWallView() {
+  const wallView = viewMode === 'wall' && Boolean(room.id);
+  document.querySelector('#view-top').setAttribute('aria-pressed', String(!wallView));
+  document.querySelector('#view-wall').setAttribute('aria-pressed', String(wallView));
+  document.querySelector('#view-wall').disabled = !room.id;
+  document.querySelector('#wall-tools').hidden = !wallView;
+  document.querySelector('#wall-workspace').hidden = !wallView;
+  document.querySelector('.plan-stage').hidden = wallView;
+  document.querySelector('.plan-footer').hidden = wallView;
+  document.querySelector('#room-title').textContent = wallView ? WG.labels[activeWall] : 'План сверху';
+  document.querySelector('.card-header p').textContent = wallView ? 'Вид из центра комнаты' : `Вид сверху · ${format(room.width)} × ${format(room.depth)} м`;
+  const plan = document.querySelector('#floor-plan');
+  plan.querySelectorAll('.top-wall').forEach(node => node.remove());
+  if (room.id) Object.keys(WG.labels).forEach(wall => plan.append(wallButton(wall, `top-wall side-${wall}`)));
+  const tabs = document.querySelector('#wall-tabs'); tabs.replaceChildren();
+  Object.keys(WG.labels).forEach(wall => {
+    const button = wallButton(wall, 'wall-tab'); button.textContent = WG.labels[wall]; button.setAttribute('aria-pressed', String(wall === activeWall)); tabs.append(button);
+  });
+  if (!wallView) return;
+  const elevation = document.querySelector('#wall-elevation'); elevation.replaceChildren();
+  const span = WG.length(room, activeWall), ceiling = WG.ceiling(room);
+  elevation.style.aspectRatio = `${span} / ${ceiling}`;
+  elevation.style.width = `min(100%, ${400 * span / ceiling}px)`;
+  elevation.style.backgroundSize = `${.5 / span * 100}% ${.5 / ceiling * 100}%`;
+  const objects = room.furniture.filter(f => f.wall === activeWall);
+  document.querySelector('#wall-empty').hidden = objects.length > 0;
+  document.querySelector('#wall-dimensions').textContent = `${format(span)} × ${format(ceiling)} м`;
+  objects.forEach(f => {
+    const p = WG.project(f, room);
+    const button = element('button', `wall-object ${f.type}${f.id === selectedId ? ' is-selected' : ''}${f.id === selectedId && foundItemId ? ' is-match' : ''}${p.height < .3 ? ' is-shelf' : ''}`);
+    button.type = 'button'; button.dataset.id = f.id;
+    button.style.left = `${p.u / span * 100}%`; button.style.bottom = `${p.z / ceiling * 100}%`;
+    button.style.width = `${p.span / span * 100}%`; button.style.height = `${p.height / ceiling * 100}%`;
+    button.setAttribute('aria-label', `${f.name}, ${WG.labels[activeWall]}, от пола ${format(p.z)} м`);
+    button.title = `${f.name} · ${format(p.z)} м от пола`;
+    button.classList.toggle('is-movable', movingId === f.id);
+    button.setAttribute('aria-pressed', String(f.id === selectedId));
+    button.append(element('span', 'wall-object-name', f.name), element('span', 'wall-object-height', `${format(p.z)} м от пола`));
+    button.addEventListener('click', () => selectFurniture(f.id));
+    attachWallDrag(button, f);
+    elevation.append(button);
+  });
+  drawMiniPlan(document.querySelector('#wall-minimap'), room);
+  const directions = { north: 'A — верхняя сторона плана. Слева направо: D → B.', east: 'B — правая сторона плана. Слева направо: A → C.', south: 'C — нижняя сторона плана. Слева направо: B → D.', west: 'D — левая сторона плана. Слева направо: C → A.' };
+  document.querySelector('#wall-direction').textContent = directions[activeWall];
+  const f = currentFurniture();
+  document.querySelector('#attach-selected').disabled = !f || f.wall === activeWall || movingId !== f.id;
+  document.querySelector('#attach-selected').textContent = f ? `Привязать «${f.name}» к ${WG.labels[activeWall].slice(-1)}` : 'Выберите мебель на мини-плане';
+}
+function attachWallDrag(button, f) {
+  let start = null; button.style.touchAction = movingId === f.id ? 'none' : 'auto';
+  button.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || movingId !== f.id) return;
+    const p = WG.project(f, room), bounds = document.querySelector('#wall-elevation').getBoundingClientRect();
+    start = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, u: p.u, z: p.z, width: bounds.width, height: bounds.height, moved: false, original: { ...f } };
+    button.setPointerCapture(event.pointerId);
+  });
+  button.addEventListener('pointermove', event => {
+    if (!start || event.pointerId !== start.pointerId) return;
+    const dx = event.clientX - start.x, dy = event.clientY - start.y;
+    if (!start.moved && Math.hypot(dx, dy) < 4) return;
+    start.moved = true;
+    const p = WG.project(f, room);
+    const u = snapWithin(start.u + dx / start.width * WG.length(room, f.wall), WG.length(room, f.wall) - p.span);
+    const z = snapWithin(start.z - dy / start.height * WG.ceiling(room), WG.ceiling(room) - p.height);
+    Object.assign(f, WG.fromWall(f, room, u, z));
+    selectedId = f.id;
+    button.style.left = `${u / WG.length(room, f.wall) * 100}%`; button.style.bottom = `${z / WG.ceiling(room) * 100}%`;
+    button.querySelector('.wall-object-height').textContent = `${format(z)} м от пола`; renderDetails();
+  });
+  function finish(event, cancel) {
+    if (!start || start.pointerId !== event.pointerId) return;
+    const moved = start.moved; if (cancel) Object.assign(f, start.original); start = null;
+    if (moved) { commit(cancel ? 'Перемещение отменено.' : 'План и стена обновлены.'); focusFurniture(); }
+  }
+  button.addEventListener('pointerup', e => finish(e, false)); button.addEventListener('pointercancel', e => finish(e, true));
+  button.addEventListener('keydown', event => {
+    const delta = { ArrowLeft: [-.1, 0], ArrowRight: [.1, 0], ArrowUp: [0, .1], ArrowDown: [0, -.1] }[event.key];
+    if (!delta || movingId !== f.id) return; event.preventDefault(); selectedId = f.id; moveOnWall(f, ...delta); commit('План и стена обновлены.'); focusFurniture();
+  });
+}
+function renderHome() {
+  const workspace = document.querySelector('#workspace'); workspace.classList.toggle('home-view', homeOpen);
+  document.querySelector('#home-overview').hidden = !homeOpen;
+  document.querySelector('#home-illustration').hidden = !homeOpen;
+  document.querySelector('#home-button').setAttribute('aria-pressed', String(homeOpen));
+  document.querySelector('.nav-active').classList.toggle('is-idle', homeOpen);
+  document.querySelector('#page-title').textContent = homeOpen ? 'Мой дом' : room.name;
+  document.querySelector('#page-subtitle').textContent = homeOpen ? `Комнат: ${rooms.length} · Мебели: ${rooms.flatMap(r => r.furniture).length} · Вещей: ${rooms.flatMap(r => r.furniture.flatMap(itemsOf)).length}` : 'План и места хранения';
+  document.querySelector('.room-summary>span').textContent = homeOpen ? 'общая площадь' : 'площадь комнаты';
+  document.querySelector('#home-summary').textContent = `Комнат: ${rooms.length} · Мебели: ${rooms.flatMap(r => r.furniture).length} · Вещей: ${rooms.flatMap(r => r.furniture.flatMap(itemsOf)).length}`;
+  document.querySelector('#room-area').textContent = homeOpen ? `${format(rooms.reduce((sum, r) => sum + r.width * r.depth, 0))} м²` : `${format(room.width * room.depth)} м²`;
+  document.querySelector('#breadcrumb-room').textContent = homeOpen ? 'Обзор' : room.name;
+  const overview = document.querySelector('#home-overview'); overview.replaceChildren();
+  rooms.forEach(candidate => {
+    const card = element('button', 'home-room-card'); card.type = 'button';
+    const preview = element('div', 'home-mini-plan'); preview.setAttribute('aria-hidden', 'true'); drawMiniPlan(preview, candidate, false);
+    card.append(preview, element('h2', '', candidate.name), element('p', '', `${format(candidate.width * candidate.depth)} м² · Мебель: ${candidate.furniture.length} · Вещи: ${candidate.furniture.flatMap(itemsOf).length}`), element('span', 'home-open', 'Открыть комнату ↗'));
+    card.addEventListener('click', () => selectRoom(candidate.id)); overview.append(card);
+  });
+
+}
+document.querySelector('#home-button').addEventListener('click', () => { movingId = null; homeOpen = true; search.value = ''; results.hidden = true; document.querySelector('#search-status').textContent = ''; renderRoom(); });
+document.querySelector('.nav-active').addEventListener('click', event => { event.preventDefault(); homeOpen = false; renderRoom(); });
+document.querySelector('#view-top').addEventListener('click', () => { viewMode = 'top'; renderRoom(); });
+document.querySelector('#view-wall').addEventListener('click', () => { viewMode = 'wall'; const f = currentFurniture(); if (f?.wall) activeWall = f.wall; renderRoom(); });
+document.querySelector('#show-object-wall').addEventListener('click', () => { const f = currentFurniture(); if (!f?.wall) return; activeWall = f.wall; viewMode = 'wall'; renderRoom(); });
+document.querySelector('#add-wall-shelf').addEventListener('click', () => {
+  openEditor('new-furniture');
+  document.querySelector('#dialog-title').textContent = 'Настенная полка';
+  document.querySelector('#edit-name').value = 'Полка'; document.querySelector('#edit-type').value = 'shelf';
+  document.querySelector('#edit-width').value = ['north', 'south'].includes(activeWall) ? 1.2 : .3;
+  document.querySelector('#edit-depth').value = ['north', 'south'].includes(activeWall) ? .3 : 1.2;
+  document.querySelector('#edit-height').value = .08; document.querySelector('#edit-elevation').value = Math.min(1.4, Math.max(0, WG.ceiling(room) - .08));
+});
+document.querySelector('#attach-selected').addEventListener('click', () => {
+  const f = currentFurniture(); if (!f || movingId !== f.id) return;
+  const candidate = WG.pin({ ...f, wall: activeWall }, room);
+  if (!WG.valid(candidate, room)) { notify('Предмет не помещается на стене. Измените размеры или положение.'); return; }
+  Object.assign(f, candidate); commit('Мебель привязана к стене. План сверху обновлён.');
+});
+document.querySelector('#toggle-move').addEventListener('click', () => {
+  const f = currentFurniture(); if (!f) return;
+  movingId = movingId === f.id ? null : f.id;
+  renderDetails(); renderWallView();
+});
+function animateNavigation() {
+  const spaceKey = homeOpen ? 'home' : room.id;
+  const routeKey = homeOpen ? 'home' : `${room.id}:${viewMode}:${viewMode === 'wall' ? activeWall : ''}`;
+  if (routeKey === lastRouteKey) return;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (lastRouteKey !== null && !reduce) {
+    const targets = homeOpen ? ['#home-illustration', '#home-overview'] : ['.page-heading', '.workspace-grid'];
+    targets.forEach((selector, index) => {
+      const node = document.querySelector(selector);
+      node.getAnimations().forEach(animation => animation.cancel());
+      node.animate([{ opacity: 0, transform: 'translateY(9px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 260, delay: index * 30, easing: 'cubic-bezier(.2,.75,.25,1)', fill: 'backwards' });
+    });
+  }
+  if (lastSpaceKey !== null && spaceKey !== lastSpaceKey) window.scrollTo({ top: 0, behavior: reduce ? 'instant' : 'smooth' });
+  lastRouteKey = routeKey; lastSpaceKey = spaceKey;
+}
+const requestedView = new URLSearchParams(location.search);
+const requestedRoom = rooms.find(candidate => candidate.id === requestedView.get('room'));
+if (requestedRoom) { room = requestedRoom; selectedId = room.furniture[0]?.id || null; }
+if (requestedView.get('view') === 'wall' && room.id) {
+  viewMode = 'wall';
+  const requestedWall = requestedView.get('wall');
+  if (Object.hasOwn(WG.labels, requestedWall)) activeWall = requestedWall;
+  selectedId = room.furniture.find(f => f.wall === activeWall)?.id || selectedId;
+}
+if (requestedView.get('view') === 'home') homeOpen = true;
 renderRoom();

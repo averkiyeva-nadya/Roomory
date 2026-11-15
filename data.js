@@ -2,6 +2,7 @@
 
 // Shared browser/Node validation. Return a fresh, whitelisted copy, never the input object.
 const RoomoryData = (() => {
+  const walls = typeof module !== 'undefined' ? require('./wall-geometry.js') : RoomoryWallGeometry;
   const MAX_BYTES = 5 * 1024 * 1024;
   const types = new Set(['wardrobe', 'dresser', 'shelf', 'desk', 'bed', 'nightstand']);
   function validate(input, backup = false) {
@@ -31,12 +32,18 @@ const RoomoryData = (() => {
       const where = `Комната ${ri + 1}`;
       if (!object(r)) fail(`${where}: неверная запись.`);
       const result = { id: id(r.id, where), name: text(r.name, 60, where), width: size(r.width, where), depth: size(r.depth, where) };
+      result.wallHeight = r.wallHeight ?? 2.7;
+      if (!Number.isFinite(result.wallHeight) || result.wallHeight < .5 || result.wallHeight > 10) fail(`${where}: высота стен должна быть от 0,5 до 10 м.`);
       result.furniture = list(r.furniture, 500, where).map((f, fi) => {
         const place = `${where}, мебель ${fi + 1}`;
         if (!object(f) || !types.has(f.type)) fail(`${place}: неизвестный тип мебели.`);
         const item = { id: id(f.id, place), name: text(f.name, 60, place), type: f.type, width: size(f.width, place), depth: size(f.depth, place), x: f.x, y: f.y, rotation: f.rotation };
         if (!Number.isFinite(f.x) || !Number.isFinite(f.y) || f.x < 0 || f.y < 0 || f.x + f.width > r.width + 1e-8 || f.y + f.depth > r.depth + 1e-8) fail(`${place}: мебель выходит за границы комнаты.`);
         if (![0, 90, 180, 270].includes(f.rotation)) fail(`${place}: угол должен быть 0, 90, 180 или 270°.`);
+        item.wall = f.wall ?? null; item.height = f.height ?? walls.heightOf(f); item.elevation = f.elevation ?? 0;
+        if (item.wall !== null && !Object.hasOwn(walls.labels, item.wall)) fail(`${place}: неизвестная стена.`);
+        if (!walls.valid(item, result)) fail(`${place}: неверная высота или мебель выходит за высоту стены.`);
+        if (item.wall) { const pinned = walls.pin(item, result); if (Math.abs(pinned.x - item.x) > 1e-6 || Math.abs(pinned.y - item.y) > 1e-6) fail(`${place}: положение мебели не совпадает с выбранной стеной.`); }
         const names = new Set(); let systemCount = 0;
         item.sections = list(f.sections, 200, place).map((s, si) => {
           const shelf = `${place}, место ${si + 1}`;
