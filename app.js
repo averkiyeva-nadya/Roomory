@@ -34,30 +34,27 @@ let room = bedroom;
 const STORAGE_KEY = 'roomory.project.v1';
 let selectedId = 'wardrobe';
 let foundItemId = null;
+let storageReadFailed = false;
 try {
-  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-  if (saved?.version === 1 && validRooms(saved.rooms)) {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw !== null) {
+    const saved = RoomoryData.parse(raw);
     rooms.splice(0, rooms.length, ...saved.rooms);
-    room = rooms.find(candidate => candidate.id === saved.roomId) || rooms[0] || emptyProjectRoom();
-    selectedId = room.furniture.find(f => f.id === saved.selectedId)?.id || room.furniture[0]?.id || null;
-  } else if (saved !== null) showStorageNotice();
-} catch { showStorageNotice(); }
+    room = rooms.find(candidate => candidate.id === saved.roomId) || emptyProjectRoom();
+    selectedId = saved.selectedId;
+  }
+} catch { storageReadFailed = true; showStorageNotice(); }
 function emptyProjectRoom() { return { id: null, name: 'Нет комнат', width: 5, depth: 4, furniture: [] }; }
-function validRooms(value) {
-  const seen = new Set();
-  const idValid = id => typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && !seen.has(id) && (seen.add(id), true);
-  const numberValid = n => Number.isFinite(n) && n >= .1 && n <= 30;
-  return Array.isArray(value) && value.every(r => r && idValid(r.id) && typeof r.name === 'string' && r.name.trim() && numberValid(r.width) && numberValid(r.depth) && Array.isArray(r.furniture) && r.furniture.every(f => f && idValid(f.id) && typeof f.name === 'string' && numberValid(f.width) && numberValid(f.depth) && Number.isFinite(f.rotation) && f.rotation % 90 === 0 && Number.isFinite(f.x) && Number.isFinite(f.y) && fits(f, r) && Array.isArray(f.sections) && f.sections.every(section => section && typeof section.name === 'string' && Array.isArray(section.items) && section.items.every(item => item && typeof item.id === 'string' && typeof item.name === 'string' && Number.isInteger(item.quantity) && item.quantity >= 1 && item.quantity <= 999999 && (item.note === undefined || typeof item.note === 'string')))));
-}
 
 function showStorageNotice() {
   const status = document.querySelector('#storage-status');
   status.hidden = false;
-  status.textContent = 'Не удалось прочитать или сохранить проект в браузере. Не закрывайте страницу, если хотите сохранить текущую работу.';
+  status.textContent = storageReadFailed ? 'Сохранённый проект повреждён: показан демонстрационный пример. Исходная запись не перезаписывается. Для восстановления импортируйте проверенную копию JSON.' : 'Браузер не смог сохранить изменения. Пока они доступны только в этой вкладке. Скачайте резервную копию JSON перед закрытием.';
 }
 function saveSelection() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, rooms, roomId: room.id, selectedId })); }
-  catch { showStorageNotice(); }
+  if (storageReadFailed) { showStorageNotice(); return false; }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, rooms, roomId: room.id, selectedId })); document.querySelector('#storage-status').hidden = true; return true; }
+  catch { showStorageNotice(); return false; }
 }
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -119,7 +116,10 @@ function renderDetails() {
     button.classList.toggle('is-match', selected && foundItemId !== null);
     button.setAttribute('aria-pressed', String(selected));
   });
-  document.querySelector('.details-card').classList.toggle('has-no-selection', !furniture);
+  const detailsPanel = document.querySelector('.details-card');
+  detailsPanel.removeAttribute('aria-labelledby');
+  detailsPanel.setAttribute('aria-label', furniture ? `Содержимое: ${furniture.name}` : 'Содержимое мебели');
+  detailsPanel.classList.toggle('has-no-selection', !furniture);
   document.querySelector('#empty-details').hidden = Boolean(furniture);
   if (!furniture) return;
   document.querySelector('#object-position').textContent = `От левой стены: ${format(furniture.x)} м · от верхней: ${format(furniture.y)} м · поворот ${furniture.rotation}°`;
@@ -181,7 +181,7 @@ function renderDetails() {
 const search = document.querySelector('#search');
 const results = document.querySelector('#search-results');
 function renderSearch() {
-  const query = search.value.trim().toLocaleLowerCase('ru');
+  const query = search.value.trim().normalize('NFKC').toLocaleLowerCase('ru');
   results.replaceChildren();
   foundItemId = null;
   renderDetails();
@@ -192,11 +192,12 @@ function renderSearch() {
   }
   const matches = [];
   rooms.forEach(matchRoom => matchRoom.furniture.forEach(furniture => furniture.sections.forEach(section => section.items.forEach(item => {
-    if (item.name.toLocaleLowerCase('ru').includes(query)) matches.push({ matchRoom, furniture, section, item });
+    if (item.name.normalize('NFKC').toLocaleLowerCase('ru').includes(query)) matches.push({ matchRoom, furniture, section, item });
   }))));
   results.hidden = false;
   document.querySelector('#search-status').textContent = matches.length ? `Найдено: ${matches.length}` : 'Ничего не найдено';
-  if (!matches.length) results.append(element('p', 'no-results', 'Пока ничего не нашли. Попробуйте «паспорт», «шарф» или «зарядка».'));
+  if (matches.length) results.append(element('p', 'results-caption', `Найдено: ${matches.length}. Выберите нужное место.`));
+  if (!matches.length) results.append(element('p', 'no-results', 'Ничего не найдено. Проверьте название или попробуйте часть слова.'));
   matches.forEach(({ matchRoom, furniture, section, item }) => {
     const button = element('button', 'search-result');
     button.type = 'button';
@@ -208,19 +209,25 @@ function renderSearch() {
       results.hidden = true;
       document.querySelector('#search-status').textContent = `${item.name}: ${room.name}, ${furniture.name}, ${section.name}`;
       document.querySelector(`.furniture[data-id="${furniture.id}"]`).focus({ preventScroll: true });
-      document.querySelector('.details-card').scrollIntoView({ behavior: 'instant', block: 'nearest' });
+      document.querySelector('.item.is-found')?.scrollIntoView({ behavior: 'instant', block: 'center' });
     });
     results.append(button);
   });
 }
 search.addEventListener('input', renderSearch);
 search.addEventListener('focus', () => { if (search.value.trim()) renderSearch(); });
+results.addEventListener('keydown', event => {
+  const buttons = [...results.querySelectorAll('button')];
+  const index = buttons.indexOf(document.activeElement);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); }
+  if (event.key === 'Escape') { search.focus(); results.hidden = true; }
+});
 search.addEventListener('keydown', event => {
   if (event.key === 'ArrowDown' && !results.hidden) { event.preventDefault(); results.querySelector('button')?.focus(); }
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') results.hidden = true;
-  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open && !document.querySelector('#content-dialog').open) { event.preventDefault(); search.focus(); }
+  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open && !document.querySelector('#content-dialog').open && !document.querySelector('#import-dialog').open) { event.preventDefault(); search.focus(); }
 });
 document.addEventListener('click', event => { if (!event.target.closest('.search-section')) results.hidden = true; });
 function selectRoom(id) {
@@ -234,6 +241,8 @@ function selectRoom(id) {
   renderRoom();
 }
 function renderRoom() {
+  document.querySelector('#workspace').classList.toggle('project-is-empty', !room.id);
+  document.querySelector('.empty-details p').textContent = room.id ? 'Выберите мебель на плане — здесь появятся её отделения и содержимое.' : 'Сначала создайте комнату и добавьте мебель.';
   document.querySelector('#edit-room').disabled = !room.id;
   document.querySelector('#new-furniture').disabled = !room.id;
   document.querySelector('#back-to-bedroom').textContent = room.id ? 'Добавить мебель ＋' : 'Создать первую комнату ＋';
@@ -244,7 +253,8 @@ function renderRoom() {
     const button = element('button', 'room-tab');
     button.type = 'button';
     if (candidate.id === room.id) button.setAttribute('aria-current', 'page');
-    const label = element('span', 'room-tab-label', candidate.name);
+    const label = element('span', 'room-tab-label');
+    const roomName = element('span', 'room-tab-name', candidate.name); roomName.title = candidate.name; label.append(roomName);
     label.append(element('small', '', `${(candidate.width * candidate.depth).toLocaleString('ru')} м² · ${candidate.furniture.length ? 'мебель на плане' : 'пустая комната'}`));
     button.append(element('span', 'room-symbol', candidate.id === 'bedroom' ? '▧' : candidate.id === 'office' ? '▤' : '⌂'), label, element('span', 'room-count', candidate.furniture.length));
     button.addEventListener('click', () => selectRoom(candidate.id));
@@ -266,7 +276,7 @@ function fits(f, r) { return f.x >= 0 && f.y >= 0 && f.x + f.width <= r.width + 
 function format(n) { return n.toLocaleString('ru', { maximumFractionDigits: 2 }); }
 function notify(message) { document.querySelector('#editor-status').textContent = message; }
 function currentFurniture() { return room.furniture.find(f => f.id === selectedId); }
-function commit(message) { foundItemId = null; search.value = ''; results.hidden = true; document.querySelector('#search-status').textContent = ''; saveSelection(); renderRoom(); notify(message); }
+function commit(message) { foundItemId = null; search.value = ''; results.hidden = true; document.querySelector('#search-status').textContent = ''; const saved = saveSelection(); renderRoom(); notify(saved ? message : 'Изменения только в этой вкладке: сохранение недоступно. Скачайте экспорт JSON.'); }
 function snapWithin(n, max) { return Math.max(0, Math.min(Math.round(n * 10) / 10, Math.floor((max + 1e-8) * 10) / 10)); }
 function moveObject(f, x, y) {
   f.x = snapWithin(x, room.width - f.width);
@@ -480,4 +490,55 @@ document.querySelector('#remove-content').addEventListener('click', () => {
   }
 });
 rooms.forEach(r => r.furniture.forEach(ensureSections));
+
+function projectSnapshot() { return { version: 1, rooms, roomId: room.id, selectedId }; }
+function exportProject() {
+  try {
+    const project = RoomoryData.validate(projectSnapshot());
+    const backup = { format: 'roomory-backup', createdAt: new Date().toISOString(), ...project };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    if (blob.size > RoomoryData.MAX_BYTES) throw new Error('Копия превышает лимит 5 МБ. Сократите объём проекта перед экспортом.');
+    const url = URL.createObjectURL(blob);
+    const link = element('a'); link.href = url; link.download = `roomory-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notify('Резервная копия JSON подготовлена. Проверьте папку загрузок браузера.');
+  } catch (error) { notify(`Не удалось экспортировать проект: ${error.message}`); }
+}
+const importDialog = document.querySelector('#import-dialog');
+const importFile = document.querySelector('#import-file');
+let pendingImport = null;
+let importGeneration = 0;
+for (const id of ['export-project', 'export-before-import']) document.querySelector(`#${id}`).addEventListener('click', exportProject);
+document.querySelector('#import-project').addEventListener('click', () => { importFile.value = ''; importFile.click(); });
+importFile.addEventListener('change', async () => {
+  const generation = ++importGeneration;
+  pendingImport = null;
+  const file = importFile.files?.[0]; if (!file) return;
+  try {
+    if (file.size > RoomoryData.MAX_BYTES) throw new Error('Файл слишком большой. Максимальный размер — 5 МБ.');
+    const parsed = RoomoryData.parse(await file.text(), true);
+    if (generation !== importGeneration) return;
+    pendingImport = parsed;
+    const count = RoomoryData.summary(parsed);
+    document.querySelector('#import-summary').textContent = `${file.name}: комнат — ${count.rooms}, мебели — ${count.furniture}, записей вещей — ${count.items}. Файл проверен. После восстановления будет открыт выбранный в копии план.`;
+    document.querySelector('#import-error').textContent = '';
+    notify('Файл проверен. Подтвердите замену или отмените импорт.');
+    importDialog.showModal(); document.querySelector('#cancel-import').focus();
+  } catch (error) { if (generation === importGeneration) notify(`Импорт отменён: ${error.message} Текущий проект не изменён.`); }
+});
+document.querySelector('#cancel-import').addEventListener('click', () => importDialog.close());
+importDialog.addEventListener('close', () => { const cancelled = pendingImport !== null; pendingImport = null; if (cancelled) notify('Импорт отменён. Текущий проект не изменён.'); });
+document.querySelector('#confirm-import').addEventListener('click', () => {
+  if (!pendingImport) return;
+  const next = pendingImport;
+  try {
+    // Persist first: a quota/storage error leaves the current in-memory project intact.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  } catch { document.querySelector('#import-error').textContent = 'Браузер не смог сохранить копию. Проект не заменён. Освободите место или разрешите локальное хранение.'; return; }
+  rooms.splice(0, rooms.length, ...next.rooms);
+  room = rooms.find(candidate => candidate.id === next.roomId) || emptyProjectRoom(); selectedId = next.selectedId;
+  pendingImport = null; importDialog.close(); storageReadFailed = false; document.querySelector('#storage-status').hidden = true;
+  commit('Резервная копия восстановлена. Комнаты, мебель и вещи сохранены в браузере.');
+});
 renderRoom();
