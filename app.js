@@ -41,6 +41,7 @@ let homeOpen = false;
 let movingId = null;
 let lastRouteKey = null;
 let lastSpaceKey = null;
+let lastDetailId = null;
 const WG = RoomoryWallGeometry;
 
 const STORAGE_KEY = 'roomory.project.v1';
@@ -149,7 +150,7 @@ function renderDetails() {
   document.querySelector('#move-hint').textContent = moving ? 'Перетаскивайте предмет или используйте стрелки. Шаг — 10 см.' : 'Расположение зафиксировано.';
   document.querySelectorAll('[data-move]').forEach(button => { button.disabled = !moving; });
   document.querySelector('#rotate-furniture').disabled = !moving;
-  document.querySelector('#object-position').textContent = `${furniture.wall ? WG.labels[furniture.wall] + ' · ' : ''}От пола: ${format(furniture.elevation ?? 0)} м · высота: ${format(WG.heightOf(furniture))} м`;
+  document.querySelector('#object-position').textContent = `${furniture.wall ? WG.labels[furniture.wall] + ' · ' : ''}${furniture.elevation > 0 ? `Нижний край: ${format(furniture.elevation)} м от пола` : 'Стоит на полу'} · высота: ${format(WG.heightOf(furniture))} м`;
   document.querySelector('#show-object-wall').hidden = !furniture.wall;
   const stacked = document.querySelector('#stacked-items'); stacked.replaceChildren();
   const neighbours = room.furniture.filter(f => f.x < furniture.x + furniture.width && f.x + f.width > furniture.x && f.y < furniture.y + furniture.depth && f.y + f.depth > furniture.y && f.wall && f.wall === furniture.wall);
@@ -200,6 +201,7 @@ function renderDetails() {
     section.items.forEach(item => {
       const row = element('button', `item${item.id === foundItemId ? ' is-found' : ''}`);
       row.type = 'button';
+      row.dataset.itemId = item.id;
       row.setAttribute('aria-label', `Редактировать вещь «${item.name}», ${item.quantity} шт.`);
       const icon = element('span', 'item-icon', item.icon || '▣');
       icon.setAttribute('aria-hidden', 'true');
@@ -212,6 +214,12 @@ function renderDetails() {
     });
     contents.append(group);
   });
+  if (lastDetailId !== furniture.id) {
+    lastDetailId = furniture.id;
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      for (const node of [contents, document.querySelector('.details-title')]) { node.getAnimations().forEach(a => a.cancel()); node.animate([{ opacity: .6, transform: 'translateY(4px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 190, easing: 'ease-out' }); }
+    }
+  }
 }
 const search = document.querySelector('#search');
 const results = document.querySelector('#search-results');
@@ -263,7 +271,7 @@ search.addEventListener('keydown', event => {
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') results.hidden = true;
-  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open && !document.querySelector('#content-dialog').open && !document.querySelector('#import-dialog').open) { event.preventDefault(); search.focus(); }
+  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open && !document.querySelector('#content-dialog').open && !document.querySelector('#import-dialog').open && !document.querySelector('#genius-dialog').open) { event.preventDefault(); search.focus(); }
 });
 document.addEventListener('click', event => { if (!event.target.closest('.search-section')) results.hidden = true; });
 function selectRoom(id) {
@@ -290,7 +298,7 @@ function renderRoom() {
   rooms.forEach(candidate => {
     const button = element('button', 'room-tab');
     button.type = 'button';
-    if (candidate.id === room.id) button.setAttribute('aria-current', 'page');
+    if (candidate.id === room.id && !homeOpen) button.setAttribute('aria-current', 'page');
     const label = element('span', 'room-tab-label');
     const roomName = element('span', 'room-tab-name', candidate.name); roomName.title = candidate.name; label.append(roomName);
     label.append(element('small', '', `${(candidate.width * candidate.depth).toLocaleString('ru')} м² · ${candidate.furniture.length ? 'мебель на плане' : 'пустая комната'}`));
@@ -315,7 +323,7 @@ document.querySelector('#back-to-bedroom').addEventListener('click', () => { if 
 // Rectangle dimensions describe its current footprint. Rotation swaps width/depth.
 function fits(f, r) { return f.x >= 0 && f.y >= 0 && f.x + f.width <= r.width + 1e-8 && f.y + f.depth <= r.depth + 1e-8; }
 function format(n) { return n.toLocaleString('ru', { maximumFractionDigits: 2 }); }
-function notify(message) { document.querySelector('#editor-status').textContent = message; }
+function notify(message) { const node = document.querySelector('#editor-status'); node.textContent = message; if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) { node.getAnimations().forEach(a => a.cancel()); node.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 180, easing: 'ease-out' }); } }
 function currentFurniture() { return room.furniture.find(f => f.id === selectedId); }
 function commit(message) { foundItemId = null; search.value = ''; results.hidden = true; document.querySelector('#search-status').textContent = ''; const saved = saveSelection(); renderRoom(); notify(saved ? message : 'Изменения только в этой вкладке: сохранение недоступно. Скачайте экспорт JSON.'); }
 function snapWithin(n, max) { return Math.max(0, Math.min(Math.round(n * 10) / 10, Math.floor((max + 1e-8) * 10) / 10)); }
@@ -509,6 +517,7 @@ document.querySelector('#content-form').addEventListener('submit', event => {
   event.preventDefault();
   const name = document.querySelector('#content-name').value.trim();
   const error = document.querySelector('#content-error');
+  const surprise = contentMode === 'item' && /шл[еэё]пк/iu.test(name.normalize('NFKC')) && (!contentTarget || !/шл[еэё]пк/iu.test(contentTarget.name.normalize('NFKC')));
   const max = contentMode === 'section' ? 60 : 80;
   if (!name || name.length > max) { error.textContent = `Введите название от 1 до ${max} символов.`; return; }
   if (contentMode === 'section') {
@@ -533,6 +542,7 @@ document.querySelector('#content-form').addEventListener('submit', event => {
     if (location.furniture.wall) { activeWall = location.furniture.wall; viewMode = 'wall'; } else viewMode = 'top';
   }
   contentDialog.close(); commit('Содержимое сохранено в этом браузере.');
+  if (surprise) showGenius();
 });
 document.querySelector('#remove-content').addEventListener('click', () => {
   if (!contentTarget) return;
@@ -748,9 +758,11 @@ document.querySelector('#add-wall-shelf').addEventListener('click', () => {
 });
 document.querySelector('#attach-selected').addEventListener('click', () => {
   const f = currentFurniture(); if (!f || movingId !== f.id) return;
-  const candidate = WG.pin({ ...f, wall: activeWall }, room);
-  if (!WG.valid(candidate, room)) { notify('Предмет не помещается на стене. Измените размеры или положение.'); return; }
-  Object.assign(f, candidate); commit('Мебель привязана к стене. План сверху обновлён.');
+  openEditor('edit-furniture');
+  document.querySelector('#dialog-title').textContent = 'Разместить на стене';
+  document.querySelector('#dialog-description').textContent = 'Укажите высоту нижнего края над полом. 0 м — предмет стоит на полу у стены. Для навесной полки задайте высоту крепления. План сверху обновится после сохранения.';
+  document.querySelector('#edit-wall').value = activeWall;
+  document.querySelector('#edit-elevation').focus();
 });
 document.querySelector('#toggle-move').addEventListener('click', () => {
   const f = currentFurniture(); if (!f) return;
@@ -773,6 +785,18 @@ function animateNavigation() {
   if (lastSpaceKey !== null && spaceKey !== lastSpaceKey) window.scrollTo({ top: 0, behavior: reduce ? 'instant' : 'smooth' });
   lastRouteKey = routeKey; lastSpaceKey = spaceKey;
 }
+const geniusDialog = document.querySelector('#genius-dialog');
+function showGenius() {
+  if (!geniusDialog.open) geniusDialog.showModal();
+  document.querySelector('#dismiss-genius').focus();
+}
+for (const id of ['close-genius', 'dismiss-genius']) document.querySelector(`#${id}`).addEventListener('click', () => geniusDialog.close());
+geniusDialog.addEventListener('click', event => {
+  if (event.target !== geniusDialog) return;
+  const rect = geniusDialog.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) geniusDialog.close();
+});
+geniusDialog.addEventListener('close', () => document.querySelector('#add-item')?.focus({ preventScroll: true }));
 const requestedView = new URLSearchParams(location.search);
 const requestedRoom = rooms.find(candidate => candidate.id === requestedView.get('room'));
 if (requestedRoom) { room = requestedRoom; selectedId = room.furniture[0]?.id || null; }
