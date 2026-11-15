@@ -47,7 +47,7 @@ function validRooms(value) {
   const seen = new Set();
   const idValid = id => typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test(id) && !seen.has(id) && (seen.add(id), true);
   const numberValid = n => Number.isFinite(n) && n >= .1 && n <= 30;
-  return Array.isArray(value) && value.every(r => r && idValid(r.id) && typeof r.name === 'string' && r.name.trim() && numberValid(r.width) && numberValid(r.depth) && Array.isArray(r.furniture) && r.furniture.every(f => f && idValid(f.id) && typeof f.name === 'string' && numberValid(f.width) && numberValid(f.depth) && Number.isFinite(f.rotation) && f.rotation % 90 === 0 && Number.isFinite(f.x) && Number.isFinite(f.y) && fits(f, r) && Array.isArray(f.sections) && f.sections.every(section => section && typeof section.name === 'string' && Array.isArray(section.items) && section.items.every(item => item && typeof item.id === 'string' && typeof item.name === 'string' && Number.isFinite(item.quantity)))));
+  return Array.isArray(value) && value.every(r => r && idValid(r.id) && typeof r.name === 'string' && r.name.trim() && numberValid(r.width) && numberValid(r.depth) && Array.isArray(r.furniture) && r.furniture.every(f => f && idValid(f.id) && typeof f.name === 'string' && numberValid(f.width) && numberValid(f.depth) && Number.isFinite(f.rotation) && f.rotation % 90 === 0 && Number.isFinite(f.x) && Number.isFinite(f.y) && fits(f, r) && Array.isArray(f.sections) && f.sections.every(section => section && typeof section.name === 'string' && Array.isArray(section.items) && section.items.every(item => item && typeof item.id === 'string' && typeof item.name === 'string' && Number.isInteger(item.quantity) && item.quantity >= 1 && item.quantity <= 999999 && (item.note === undefined || typeof item.note === 'string')))));
 }
 
 function showStorageNotice() {
@@ -70,6 +70,10 @@ function itemWord(n) {
   return n % 10 === 1 ? 'вещь' : n % 10 >= 2 && n % 10 <= 4 ? 'вещи' : 'вещей';
 }
 function itemsOf(furniture) { return furniture.sections.flatMap(section => section.items); }
+function ensureSections(furniture) {
+  furniture.sections.forEach(section => { if (!section.id) section.id = `section-${crypto.randomUUID()}`; });
+  if (!furniture.sections.some(section => section.system === true)) furniture.sections.push({ id: `section-${crypto.randomUUID()}`, name: 'Без отдельной полки', system: true, items: [] });
+}
 function renderPlan() {
   const plan = document.querySelector('#floor-plan');
   plan.style.aspectRatio = `${room.width} / ${room.depth}`;
@@ -137,21 +141,38 @@ function renderDetails() {
     };
     document.querySelector('#furniture-illustration').innerHTML = `<svg viewBox="0 0 100 100" fill="none" stroke="#91a080" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">${shapes[furniture.type] || shapes.dresser}</svg>`;
   }
+  ensureSections(furniture);
   const contents = document.querySelector('#contents');
   contents.replaceChildren();
   if (!count) {
     const empty = element('div', 'empty-contents');
-    empty.append(element('span', '', '▱'), element('h3', '', 'Пока ничего не лежит'), element('p', '', 'Здесь появится список вещей. Добавление содержимого — на следующем этапе.'));
+    empty.append(element('span', '', '▱'), element('h3', '', 'Пока ничего не лежит'), element('p', '', 'Добавьте первую вещь: выберите полку или оставьте её без отдельного места.'));
     contents.append(empty);
   }
   furniture.sections.forEach(section => {
     const group = element('section', 'storage-group');
-    group.append(element('h3', '', section.name));
+    const heading = element('div', 'section-heading');
+    heading.append(element('h3', '', section.name));
+    if (!section.system) {
+      const edit = element('button', 'section-edit', 'Изменить');
+      edit.type = 'button';
+      edit.setAttribute('aria-label', `Изменить место «${section.name}»`);
+      edit.addEventListener('click', () => openContent('section', section));
+      heading.append(edit);
+    }
+    group.append(heading);
+    if (!section.items.length) group.append(element('p', 'section-empty', section.system ? 'Вещи без привязки к полке или ящику.' : 'Здесь пока нет вещей.'));
     section.items.forEach(item => {
-      const row = element('div', `item${item.id === foundItemId ? ' is-found' : ''}`);
-      const icon = element('span', 'item-icon', item.icon);
+      const row = element('button', `item${item.id === foundItemId ? ' is-found' : ''}`);
+      row.type = 'button';
+      row.setAttribute('aria-label', `Редактировать вещь «${item.name}», ${item.quantity} шт.`);
+      const icon = element('span', 'item-icon', item.icon || '▣');
       icon.setAttribute('aria-hidden', 'true');
-      row.append(icon, element('span', '', item.name), element('small', '', `${item.quantity} шт.`));
+      const label = element('span', 'item-label');
+      label.append(element('span', 'item-name', item.name));
+      if (item.note) label.append(element('span', 'item-note', item.note));
+      row.append(icon, label, element('small', '', `${item.quantity} шт.`));
+      row.addEventListener('click', () => openContent('item', item, section));
       group.append(row);
     });
     contents.append(group);
@@ -199,7 +220,7 @@ search.addEventListener('keydown', event => {
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') results.hidden = true;
-  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open) { event.preventDefault(); search.focus(); }
+  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open && !document.querySelector('#content-dialog').open) { event.preventDefault(); search.focus(); }
 });
 document.addEventListener('click', event => { if (!event.target.closest('.search-section')) results.hidden = true; });
 function selectRoom(id) {
@@ -245,7 +266,7 @@ function fits(f, r) { return f.x >= 0 && f.y >= 0 && f.x + f.width <= r.width + 
 function format(n) { return n.toLocaleString('ru', { maximumFractionDigits: 2 }); }
 function notify(message) { document.querySelector('#editor-status').textContent = message; }
 function currentFurniture() { return room.furniture.find(f => f.id === selectedId); }
-function commit(message) { foundItemId = null; search.value = ''; results.hidden = true; saveSelection(); renderRoom(); notify(message); }
+function commit(message) { foundItemId = null; search.value = ''; results.hidden = true; document.querySelector('#search-status').textContent = ''; saveSelection(); renderRoom(); notify(message); }
 function snapWithin(n, max) { return Math.max(0, Math.min(Math.round(n * 10) / 10, Math.floor((max + 1e-8) * 10) / 10)); }
 function moveObject(f, x, y) {
   f.x = snapWithin(x, room.width - f.width);
@@ -337,12 +358,14 @@ document.querySelector('#rotate-furniture').addEventListener('click', rotateSele
 for (const id of ['close-dialog', 'cancel-dialog']) document.querySelector(`#${id}`).addEventListener('click', () => dialog.close());
 document.querySelector('#delete-furniture').addEventListener('click', () => {
   const f = currentFurniture(); if (!f) return;
+  if (itemsOf(f).length) { notify(`В «${f.name}» есть вещи. Чтобы не потерять содержимое, сначала переместите их в другую мебель или удалите по отдельности.`); return; }
   askDeletion(`Удалить «${f.name}»?`, `Будут удалены мебель, все её отделения и вещи (${itemsOf(f).length} названий). Отменить удаление после подтверждения нельзя.`, () => {
     room.furniture.splice(room.furniture.indexOf(f), 1); selectedId = room.furniture[0]?.id || null; commit('Мебель удалена.');
   });
 });
 document.querySelector('#delete-room').addEventListener('click', () => {
   const target = room;
+  if (room.furniture.flatMap(itemsOf).length) { dialog.close(); notify('В комнате есть вещи. Сначала перенесите их в другую комнату или удалите по отдельности. Удаление комнаты заблокировано.'); return; }
   askDeletion(`Удалить «${room.name}»?`, `Будет удалена комната со всей мебелью (${room.furniture.length}) и вещами (${room.furniture.flatMap(itemsOf).length} названий). Отменить удаление после подтверждения нельзя.`, () => {
     rooms.splice(rooms.indexOf(target), 1); room = rooms[0] || emptyProjectRoom(); selectedId = room.furniture[0]?.id || null; commit('Комната удалена.');
   });
@@ -377,4 +400,84 @@ form.addEventListener('submit', event => {
   }
   dialog.close(); commit('Изменения сохранены в этом браузере.');
 });
+
+const contentDialog = document.querySelector('#content-dialog');
+let contentMode = null;
+let contentTarget = null;
+let contentSection = null;
+let contentFurniture = null;
+let locationChoices = [];
+function openContent(mode, target = null, section = null) {
+  contentMode = mode; contentTarget = target; contentSection = section; contentFurniture = currentFurniture();
+  if (!contentFurniture) return;
+  ensureSections(contentFurniture);
+  document.querySelector('#content-title').textContent = mode === 'section' ? (target ? 'Место хранения' : 'Новое место хранения') : (target ? 'Редактировать вещь' : 'Новая вещь');
+  document.querySelector('#content-description').textContent = mode === 'section' ? 'Полка, ящик или отделение. При удалении места вещи останутся в этой мебели без отдельной полки.' : 'Выберите место в любой мебели вашего дома. Чтобы переместить вещь, поменяйте место хранения и сохраните.';
+  document.querySelector('#content-name').value = target?.name || '';
+  document.querySelector('#content-name').maxLength = mode === 'section' ? 60 : 80;
+  document.querySelector('#item-fields').hidden = mode === 'section';
+  document.querySelector('#content-quantity').value = target?.quantity || 1;
+  document.querySelector('#content-note').value = target?.note || '';
+  document.querySelector('#remove-content').hidden = !target;
+  document.querySelector('#content-error').textContent = '';
+  const select = document.querySelector('#content-location'); select.replaceChildren(); locationChoices = [];
+  rooms.forEach(candidateRoom => candidateRoom.furniture.forEach(f => {
+    ensureSections(f);
+    f.sections.forEach(candidateSection => {
+      const option = element('option', '', `${candidateRoom.name} → ${f.name} → ${candidateSection.name}`);
+      option.value = String(locationChoices.length);
+      option.selected = f === contentFurniture && (section ? candidateSection === section : candidateSection.system === true);
+      locationChoices.push({ room: candidateRoom, furniture: f, section: candidateSection }); select.append(option);
+    });
+  }));
+  contentDialog.showModal(); document.querySelector('#content-name').focus();
+}
+for (const id of ['close-content', 'cancel-content']) document.querySelector(`#${id}`).addEventListener('click', () => contentDialog.close());
+document.querySelector('#add-section').addEventListener('click', () => openContent('section'));
+document.querySelector('#add-item').addEventListener('click', () => openContent('item'));
+document.querySelector('#content-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const name = document.querySelector('#content-name').value.trim();
+  const error = document.querySelector('#content-error');
+  const max = contentMode === 'section' ? 60 : 80;
+  if (!name || name.length > max) { error.textContent = `Введите название от 1 до ${max} символов.`; return; }
+  if (contentMode === 'section') {
+    if (contentFurniture.sections.some(s => s !== contentTarget && s.name.toLocaleLowerCase('ru') === name.toLocaleLowerCase('ru'))) { error.textContent = 'Такое место хранения уже есть в этой мебели.'; return; }
+    if (contentTarget) contentTarget.name = name;
+    else contentFurniture.sections.splice(contentFurniture.sections.length - 1, 0, { id: `section-${crypto.randomUUID()}`, name, items: [] });
+  } else {
+    const quantity = document.querySelector('#content-quantity').valueAsNumber;
+    const note = document.querySelector('#content-note').value.trim();
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999999) { error.textContent = 'Количество должно быть целым числом от 1 до 999999.'; return; }
+    if (note.length > 1000) { error.textContent = 'Заметка должна быть не длиннее 1000 символов.'; return; }
+    const location = locationChoices[Number(document.querySelector('#content-location').value)];
+    if (!location) { error.textContent = 'Выберите место хранения.'; return; }
+    if (contentTarget) {
+      Object.assign(contentTarget, { name, quantity, note });
+      if (location.section !== contentSection) {
+        contentSection.items.splice(contentSection.items.indexOf(contentTarget), 1);
+        location.section.items.push(contentTarget);
+      }
+    } else location.section.items.push({ id: `item-${crypto.randomUUID()}`, name, quantity, note, icon: '▣' });
+    room = location.room; selectedId = location.furniture.id;
+  }
+  contentDialog.close(); commit('Содержимое сохранено в этом браузере.');
+});
+document.querySelector('#remove-content').addEventListener('click', () => {
+  if (!contentTarget) return;
+  const target = contentTarget, section = contentSection, f = contentFurniture;
+  contentDialog.close();
+  if (contentMode === 'section') {
+    askDeletion(`Убрать место «${target.name}»?`, `Все записи (${target.items.length}) будут перенесены в «Без отдельной полки» внутри этой же мебели. Содержимое не удаляется.`, () => {
+      f.sections.find(s => s.system === true).items.push(...target.items);
+      f.sections.splice(f.sections.indexOf(target), 1);
+      commit('Место хранения удалено. Все вещи сохранены без отдельной полки.');
+    });
+  } else {
+    askDeletion(`Удалить вещь «${target.name}»?`, `Будет удалена запись и всё указанное количество (${target.quantity} шт.). Мебель и остальные вещи сохранятся.`, () => {
+      section.items.splice(section.items.indexOf(target), 1); commit('Вещь удалена.');
+    });
+  }
+});
+rooms.forEach(r => r.furniture.forEach(ensureSections));
 renderRoom();
