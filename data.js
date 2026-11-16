@@ -35,17 +35,20 @@ const RoomoryData = (() => {
     if (!object(plot) || ![plot.width, plot.depth].every(n => Number.isFinite(n) && n >= 5 && n <= 500)) fail('Участок: размеры должны быть от 5 до 500 м.');
     const buildings = list(input.buildings === undefined ? initial.buildings : input.buildings, 50, 'Постройки').map((b, i) => {
       const where = `Постройка ${i + 1}`;
-      if (!object(b) || !['house', 'shed', 'garage', 'other'].includes(b.kind)) fail(`${where}: неизвестный тип.`);
+      if (!object(b) || !['house', 'shed', 'garage', 'gazebo', 'other'].includes(b.kind)) fail(`${where}: неизвестный тип.`);
       return { id: id(b.id, where), name: text(b.name, 60, where), kind: b.kind, shape: b.shape, ...(b.shapeParams !== undefined ? { shapeParams: b.shapeParams && typeof b.shapeParams === 'object' && !Array.isArray(b.shapeParams) ? Object.fromEntries(['c','d','e'].filter(key => Object.hasOwn(b.shapeParams,key)).map(key=>[key,b.shapeParams[key]])) : null } : {}), x: b.x, y: b.y, width: b.width, depth: b.depth, rotation: b.rotation };
     });
     if (!buildings.some(b => b.id === 'main-house')) fail('В проекте должен оставаться основной дом.');
-    buildings.forEach(b => { if (!estate.valid(b, plot, buildings)) fail(`${b.name}: постройки пересекаются, имеют неверные размеры или выходят за участок.`); });
+    const trees=list(input.trees??[],200,'Деревья').map((t,i)=>{const where=`Дерево ${i+1}`;if(!object(t))fail(`${where}: неверная запись.`);if(t.kind!==undefined&&!['tree','flowerbed','bench','table'].includes(t.kind))fail(`${where}: неизвестный вид озеленения.`);if(t.shape!==undefined&&(t.kind!=='flowerbed'||!['circle','rectangle'].includes(t.shape)))fail(`${where}: неизвестная форма клумбы.`);if(t.variety!==undefined&&(['flowerbed','bench','table'].includes(t.kind)||!['broadleaf','oak','pine','fruit'].includes(t.variety)))fail(`${where}: неизвестный вид дерева.`);if(['bench','table'].includes(t.kind)&&![0,90,180,270].includes(t.rotation??0))fail(`${where}: неверный поворот.`);return{id:id(t.id,where),...(t.kind?{kind:t.kind}:{}),...(t.shape?{shape:t.shape}:{}),...(t.variety?{variety:t.variety}:{}),...(['bench','table'].includes(t.kind)?{rotation:t.rotation??0}:{}),...((['bench','table'].includes(t.kind)||t.kind==='flowerbed'&&t.shape==='rectangle')?{width:t.width,depth:t.depth}:{}),name:text(t.name,60,where),x:t.x,y:t.y,diameter:(['bench','table'].includes(t.kind)||t.kind==='flowerbed'&&t.shape==='rectangle')?t.width:t.diameter};});
+    trees.forEach(t=>{if(!estate.validTree(t,plot,buildings))fail(`${t.name}: крона выходит за участок, пересекает постройку или имеет неверный диаметр (0,5–15 м).`);});
+    buildings.forEach(b => { if (b.width<1||b.depth<1||!estate.valid(b, plot, buildings,trees)) fail(`${b.name}: постройки пересекаются, имеют неверные размеры или выходят за участок.`); });
     let itemCount = 0;
     const rooms = list(input.rooms, 100, 'Комнаты').map((r, ri) => {
       const where = `Комната ${ri + 1}`;
       if (!object(r)) fail(`${where}: неверная запись.`);
       const result = { id: id(r.id, where), name: text(r.name, 60, where), width: size(r.width, where), depth: size(r.depth, where) };
       if(r.cut!=null){if(!object(r.cut))fail(`${where}: неверный вырез.`);result.cut={corner:r.cut.corner,length:r.cut.length,width:r.cut.width};if(!roomGeometry.validCut(result))fail(`${where}: вырез должен оставлять не менее 0,1 м с каждой стороны.`);}
+      if(Object.hasOwn(r,'door')){result.door=r.door===null?null:object(r.door)?{wall:r.door.wall,offset:r.door.offset,width:r.door.width}:undefined;if(!roomGeometry.validDoor(result,result.door))fail(`${where}: дверь не помещается на выбранной стене.`);}
       result.buildingId = r.buildingId ?? 'main-house';
       if (!buildings.some(b => b.id === result.buildingId)) fail(`${where}: постройка не найдена.`);
       if(r.buildingRect !== undefined) {
@@ -98,7 +101,7 @@ const RoomoryData = (() => {
     rooms.forEach(r=>{if(r.buildingRect && !estate.roomRectValid(r.buildingRect,buildings.find(b=>b.id===r.buildingId),rooms.filter(other=>other!==r&&other.buildingId===r.buildingId&&other.buildingRect).map(other=>other.buildingRect)))fail(`${r.name}: комнаты постройки пересекаются.`);});
     const activeId = buildings.some(b => b.id === input.activeBuildingId) ? input.activeBuildingId : (rooms.find(r => r.id === input.roomId)?.buildingId || 'main-house');
     const room = rooms.find(r => r.id === input.roomId && r.buildingId === activeId) || rooms.find(r => r.buildingId === activeId);
-    return { version: 1, plot: { width: plot.width, depth: plot.depth }, buildings, activeBuildingId: activeId, rooms, roomId: room?.id || null, selectedId: room?.furniture.find(f => f.id === input.selectedId)?.id || room?.furniture[0]?.id || null };
+    return { version: 1, plot: { width: plot.width, depth: plot.depth }, trees, buildings, activeBuildingId: activeId, rooms, roomId: room?.id || null, selectedId: room?.furniture.find(f => f.id === input.selectedId)?.id || room?.furniture[0]?.id || null };
   }
   function parse(text, backup = false) {
     let input;

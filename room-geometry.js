@@ -22,6 +22,15 @@ const RoomoryRoomGeometry=(()=>{
     const mapping={nw:{north:[0,len],west:[r.depth-w,w]},ne:{north:[r.width-len,len],east:[0,w]},se:{south:[0,len],east:[r.depth-w,w]},sw:{south:[r.width-len,len],west:[0,w]}};
     const segment=mapping[c.corner][wall];return segment?{u:segment[0],span:segment[1]}:null;
   }
-  return{corners,validCut,removed,contains,area,polygon,clip,place,blockedWall};
+  function doorSegment(r,wall){
+    const horizontal=['north','south'].includes(wall),length=horizontal?r.width:r.depth,c=removed(r);
+    if(!c)return [0,length];
+    const blocked=wall==='north'&&c.y===0||wall==='south'&&Math.abs(c.y+c.depth-r.depth)<1e-8||wall==='west'&&c.x===0||wall==='east'&&Math.abs(c.x+c.width-r.width)<1e-8;
+    if(!blocked)return [0,length];
+    const start=horizontal?c.x:c.y,span=horizontal?c.width:c.depth;return start<1e-8?[span,length]:[0,start];
+  }
+  function validDoor(r,d){if(d===null)return true;if(!d||!['north','east','south','west'].includes(d.wall)||![d.offset,d.width].every(Number.isFinite)||d.width<.1||d.offset<0)return false;const [a,b]=doorSegment(r,d.wall);return d.offset>=a-1e-8&&d.offset+d.width<=b+1e-8&&d.width<=Math.min(r.width,r.depth)+1e-8;}
+  function doorOf(r){if(Object.hasOwn(r,'door'))return r.door;for(const wall of ['south','north','east','west']){const [a,b]=doorSegment(r,wall),width=Math.min(.8,b-a,r.width,r.depth);if(width>=.1-1e-8)return{wall,offset:a+(b-a-width)/2,width};}return null;}
+  return{doorOf,validDoor,doorSegment,corners,validCut,removed,contains,area,polygon,clip,place,blockedWall};
 })();
 if(typeof module!=='undefined')module.exports=RoomoryRoomGeometry;
