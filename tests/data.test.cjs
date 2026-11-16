@@ -44,7 +44,7 @@ test('rejects invalid JSON, wrong format and unknown version', () => {
   assert.throws(() => data.validate({ ...fixture(), format: 'other' }, true), /резервная копия/);
 });
 test('empty project can be restored; arbitrary keys are not copied', () => {
-  assert.deepEqual(data.validate({ version: 1, rooms: [] }), { version: 1, rooms: [], roomId: null, selectedId: null });
+  assert.deepEqual(data.validate({ version: 1, rooms: [] }), { version: 1, ...require('../estate.js').defaults(), activeBuildingId: 'main-house', rooms: [], roomId: null, selectedId: null });
   const input = fixture(); input.rooms[0].injected = 'ignored';
   assert.equal(data.validate(input).rooms[0].injected, undefined);
 });

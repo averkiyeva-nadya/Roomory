@@ -1,7 +1,8 @@
 'use strict';
 const RoomoryWallGeometry = (() => {
   const labels = { north: 'Стена A', east: 'Стена B', south: 'Стена C', west: 'Стена D' };
-  const heightOf = f => f.height ?? ({ bed: .5, desk: .75, nightstand: .55, dresser: .9, shelf: 1.8, wardrobe: 2 }[f.type] || 1);
+  const furnitureCatalog=typeof module!=='undefined'?require('./furniture.js'):RoomoryFurniture;
+  const heightOf = f => f.height ?? furnitureCatalog.catalog[f.type]?.height ?? 1;
   const ceiling = r => r.wallHeight ?? 2.7;
   const length = (r, wall) => ['north', 'south'].includes(wall) ? r.width : r.depth;
   function project(f, r) {
