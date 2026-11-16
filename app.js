@@ -53,6 +53,7 @@ let lastRouteKey = null;
 let lastSpaceKey = null;
 let lastDetailId = null;
 const WG = RoomoryWallGeometry;
+const RG = RoomoryRoomGeometry;
 
 const STORAGE_KEY = 'roomory.project.v1';
 let selectedId = 'wardrobe';
@@ -99,13 +100,17 @@ function ensureSections(furniture) {
 }
 function renderPlan() {
   const plan = document.querySelector('#floor-plan');
+  plan.style.clipPath=room.cut?RG.clip(room):'';
+  plan.dataset.cut=room.cut?.corner||'';
+  plan.querySelector('.room-cut-outline')?.remove();
+  if(room.cut){const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg'),poly=document.createElementNS(ns,'polygon');svg.setAttribute('class','room-cut-outline');svg.setAttribute('aria-hidden','true');svg.setAttribute('viewBox','0 0 100 100');svg.setAttribute('preserveAspectRatio','none');poly.setAttribute('points',RG.polygon(room).map(([x,y])=>`${x*100},${y*100}`).join(' '));svg.append(poly);plan.append(svg);}
   plan.style.aspectRatio = `${room.width} / ${room.depth}`;
   plan.style.width = `min(100%, ${520 * room.width / room.depth}px)`;
   plan.style.marginInline = 'auto';
   plan.style.backgroundSize = `${.5 / room.width * 100}% ${.5 / room.depth * 100}%`;
   plan.setAttribute('aria-label', `План комнаты ${room.name}. Выберите мебель`);
-  document.querySelector('.dimension-top span').textContent = `${room.width} м`;
-  document.querySelector('.dimension-left span').textContent = `${room.depth} м`;
+  document.querySelector('.dimension-top span').textContent = `Длина ${format(room.width)} м`;
+  document.querySelector('.dimension-left span').textContent = `Ширина ${format(room.depth)} м`;
   document.querySelector('#empty-room').hidden = room.furniture.length > 0;
   document.querySelector('#empty-room h3').textContent = room.id ? 'Нет мебели' : 'Нет комнат';
   document.querySelector('#empty-room p').textContent = room.id ? 'Разместите первый предмет мебели — укажите название и размеры, затем передвиньте его на плане.' : 'Создайте комнату, задайте её размеры и разместите мебель.';
@@ -114,7 +119,8 @@ function renderPlan() {
   room.furniture.forEach(furniture => {
     const button = element('button', `furniture ${furniture.type}${['shelf','wall-shelf'].includes(furniture.type) && WG.heightOf(furniture) < .3 ? ' is-floating' : ''}`);
     button.type = 'button';
-    button.dataset.id = furniture.id;
+    button.dataset.id = furniture.id;button.dataset.rotation=String(furniture.rotation);
+    if(furniture.type==='bed')button.append(bedPlanArtwork(furniture.rotation));
     button.style.left = `${furniture.x / room.width * 100}%`;
     button.style.top = `${furniture.y / room.depth * 100}%`;
     button.style.width = `${furniture.width / room.width * 100}%`;
@@ -158,6 +164,7 @@ function renderDetails() {
   document.querySelector('#empty-details').hidden = Boolean(furniture);
   if (!furniture) return;
   const moving = movingId === furniture.id;
+  document.querySelector('.plan-footer>span:last-child').textContent=moving?'Перемещайте мебель. Когда закончите, нажмите «Зафиксировать».':'Для перемещения нажмите «Переместить» в панели предмета';
   document.querySelector('#toggle-move').textContent = moving ? 'Зафиксировать' : 'Переместить';
   document.querySelector('#toggle-move').setAttribute('aria-pressed', String(moving));
   document.querySelector('#move-hint').textContent = moving ? 'Перетаскивайте предмет или используйте стрелки. Шаг — 10 см.' : 'Расположение зафиксировано.';
@@ -177,7 +184,7 @@ function renderDetails() {
   const count = itemsOf(furniture).length;
   document.querySelector('#item-count').textContent = `${count} ${itemWord(count)}`;
   document.querySelector('#contents-total').textContent = String(count).padStart(2, '0');
-  document.querySelector('#furniture-meta').textContent = `${room.name} · ${furniture.width.toLocaleString('ru')} × ${furniture.depth.toLocaleString('ru')} м`;
+  document.querySelector('#furniture-meta').textContent = `${room.name} · длина ${format(furniture.width)} м · ширина ${format(furniture.depth)} м`;
   // Fixed, application-owned SVG illustration; user data is always rendered with textContent.
   document.querySelector('#furniture-illustration').innerHTML = '<svg viewBox="0 0 100 100" fill="none"><ellipse cx="50" cy="91" rx="36" ry="5" fill="#edf0e5"/><path d="M22 18 71 10 83 19v66l-50 7-11-8V18Z" fill="#e5eadb" stroke="#95a385" stroke-width="1.5"/><path d="m22 18 11 8 50-7M33 26v66M58 23v65M71 10v9" stroke="#95a385" stroke-width="1.5"/><path d="m52 51-1 13m12-14-1 13" stroke="#7c8f6c" stroke-width="2" stroke-linecap="round"/><path d="M28 87v7m49-8v6" stroke="#95a385" stroke-width="2"/></svg>';
   if (furniture.type !== 'wardrobe') {
@@ -198,7 +205,8 @@ function renderDetails() {
       chest:'<path d="M18 46q0-25 32-25t32 25v35H18z" fill="#e7d6b5"/><path d="M18 48h64M33 25v55M67 25v55M46 45h8v14h-8z"/>'
     });
     const aliases={'bookcase':'shelf','cabinet':'nightstand','shoe-rack':'shelf','rack':'shelf','storage-box':'chest','kitchen-cabinet':'dresser','dining-table':'table','coffee-table':'table','workbench':'desk'};
-    document.querySelector('#furniture-illustration').innerHTML = `<svg viewBox="0 0 100 100" fill="none" stroke="#91a080" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">${shapes[furniture.type] || shapes[aliases[furniture.type]] || shapes.dresser}</svg>`;
+    const drawing=shapes[furniture.type] || shapes[aliases[furniture.type]] || shapes.dresser;
+    document.querySelector('#furniture-illustration').innerHTML = `<svg viewBox="0 0 100 100" fill="none" stroke="#91a080" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">${furniture.type==='bed'?`<g transform="rotate(${furniture.rotation} 50 50)">${drawing}</g>`:drawing}</svg>`;
   }
   ensureSections(furniture);
   const contents = document.querySelector('#contents');
@@ -325,15 +333,15 @@ function renderRoom() {
     if (candidate.id === room.id && !homeOpen) button.setAttribute('aria-current', 'page');
     const label = element('span', 'room-tab-label');
     const roomName = element('span', 'room-tab-name', candidate.name); roomName.title = candidate.name; label.append(roomName);
-    label.append(element('small', '', `${(candidate.width * candidate.depth).toLocaleString('ru')} м² · ${candidate.furniture.length ? 'мебель на плане' : 'пустая комната'}`));
+    label.append(element('small', '', `${RG.area(candidate).toLocaleString('ru')} м² · ${candidate.furniture.length ? 'мебель на плане' : 'пустая комната'}`));
     button.append(element('span', 'room-symbol', candidate.id === 'bedroom' ? '▧' : candidate.id === 'office' ? '▤' : '⌂'), label, element('span', 'room-count', candidate.furniture.length));
     button.addEventListener('click', () => selectRoom(candidate.id));
     navigation.append(button);
   });
   document.querySelector('#breadcrumb-room').textContent = room.name;
   document.querySelector('#room-title').textContent = room.name;
-  document.querySelector('.card-header p').textContent = `Вид сверху · ${room.width} × ${room.depth} м`;
-  document.querySelector('#room-area').textContent = `${(room.width * room.depth).toLocaleString('ru')} м²`;
+  document.querySelector('.card-header p').textContent = `Вид сверху · длина ${format(room.width)} × ширина ${format(room.depth)} м`;
+  document.querySelector('#room-area').textContent = `${RG.area(room).toLocaleString('ru')} м²`;
   const total = room.furniture.flatMap(itemsOf).length;
   document.querySelector('#room-stats').textContent = `${room.furniture.length} ${room.furniture.length % 10 === 1 && room.furniture.length % 100 !== 11 ? 'место' : [2,3,4].includes(room.furniture.length % 10) && ![12,13,14].includes(room.furniture.length % 100) ? 'места' : 'мест'} хранения · ${total} ${itemWord(total)}`;
   renderPlan();
@@ -347,16 +355,15 @@ function renderRoom() {
 document.querySelector('#back-to-bedroom').addEventListener('click', () => { if (room.id) openEditor('new-furniture'); else { homeOpen = true; renderRoom(); document.querySelector('#new-room').focus(); } });
 
 // Rectangle dimensions describe its current footprint. Rotation swaps width/depth.
-function fits(f, r) { return f.x >= 0 && f.y >= 0 && f.x + f.width <= r.width + 1e-8 && f.y + f.depth <= r.depth + 1e-8; }
+function fits(f,r){return RG.contains(f,r);}
 function format(n) { return n.toLocaleString('ru', { maximumFractionDigits: 2 }); }
 function notify(message) { const node = document.querySelector('#editor-status'); node.textContent = message; if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) { node.getAnimations().forEach(a => a.cancel()); node.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 180, easing: 'ease-out' }); } }
 function currentFurniture() { return room.furniture.find(f => f.id === selectedId); }
 function commit(message) { foundItemId = null; search.value = ''; results.hidden = true; document.querySelector('#search-status').textContent = ''; const saved = saveSelection(); renderRoom(); notify(saved ? message : 'Изменения только в этой вкладке: сохранение недоступно. Скачайте экспорт JSON.'); }
 function snapWithin(n, max) { return Math.max(0, Math.min(Math.round(n * 10) / 10, Math.floor((max + 1e-8) * 10) / 10)); }
-function moveObject(f, x, y) {
-  f.x = snapWithin(x, room.width - f.width);
-  f.y = snapWithin(y, room.depth - f.depth);
-  if (f.wall) Object.assign(f, WG.pin(f, room));
+function moveObject(f,x,y){
+  const candidate=WG.pin({...f,x:snapWithin(x,room.width-f.width),y:snapWithin(y,room.depth-f.depth)},room);
+  if(WG.valid(candidate,room))Object.assign(f,candidate);
 }
 function focusFurniture() { document.querySelector(`${viewMode === 'wall' ? '.wall-object' : '.furniture'}[data-id="${selectedId}"]`)?.focus({ preventScroll: true }); }
 function attachMovement(button, f) {
@@ -414,6 +421,10 @@ function openEditor(mode) {
   document.querySelector('#edit-depth').value = existing?.depth || (isRoom ? 4 : .6);
   document.querySelector('#edit-type').value = existing?.type || 'wardrobe';
   document.querySelector('#type-label').hidden = isRoom;
+  document.querySelector('#room-cut-editor').hidden=!isRoom;
+  document.querySelector('#room-cut-corner').value=isRoom?(existing?.cut?.corner||''):'';
+  document.querySelector('#room-cut-length').value=existing?.cut?.length??Math.max(.1,Math.min(1,(existing?.width||5)/3));
+  document.querySelector('#room-cut-width').value=existing?.cut?.width??Math.max(.1,Math.min(1,(existing?.depth||4)/3));
   document.querySelector('#elevation-label').hidden = isRoom;
   document.querySelector('#wall-field-label').hidden = isRoom;
   document.querySelector('#edit-height').min = isRoom ? '.5' : '.05';
@@ -426,6 +437,7 @@ function openEditor(mode) {
   document.querySelector('#dialog-error').textContent = '';
   document.querySelector('#save-dialog').textContent = existing ? 'Сохранить' : 'Создать';
   document.querySelector('#save-dialog').classList.remove('danger-button');
+  if(isRoom)renderRoomCutPreview();
   if(mode==='new-furniture')applyFurniturePreset();
   dialog.showModal();
   document.querySelector('#edit-name').focus();
@@ -446,7 +458,7 @@ function askDeletion(title, description, action) {
 function rotateSelected() {
   const f = currentFurniture(); if (!f || movingId !== f.id) return;
   const candidate = WG.pin({ ...f, width: f.depth, depth: f.width }, room);
-  if (!fits(candidate, room)) { notify('Поворот не выполнен: мебель выйдет за границы. Сдвиньте её от стены или увеличьте комнату.'); return; }
+  if (!fits(candidate, room)) { notify('Поворот не выполнен: мебель выйдет за контур комнаты. Сдвиньте её от стены или увеличьте комнату.'); return; }
   Object.assign(f, candidate, { rotation: (f.rotation + 90) % 360 });
   commit(`${f.name}: поворот на 90° сохранён.`);
 }
@@ -485,27 +497,31 @@ form.addEventListener('submit', event => {
   const elevation = document.querySelector('#edit-elevation').valueAsNumber;
   const wall = document.querySelector('#edit-wall').value || null;
   const isRoom = editorMode.endsWith('room');
+  const cut=isRoom?roomCutFromEditor():null;
+  if(isRoom&&!RG.validCut({width,depth,cut})){error.textContent='Вырез должен оставлять не менее 0,1 м по длине и ширине комнаты.';return;}
   if (!Number.isFinite(height) || height < (isRoom ? .5 : .05) || height > 10) { error.textContent = isRoom ? 'Высота стен: от 0,5 до 10 м.' : 'Высота предмета: от 0,05 до 10 м.'; return; }
   if (!isRoom && (!Number.isFinite(elevation) || elevation < 0 || elevation + height > WG.ceiling(room) + 1e-8)) { error.textContent = 'Высота предмета и отступ от пола должны помещаться под потолком.'; return; }
   if (editorMode === 'new-room') {
-    room = { id: `room-${crypto.randomUUID()}`, buildingId: activeBuildingId, name, width, depth, wallHeight: height, furniture: [] }; rooms.push(room); selectedId = null; homeOpen = false; viewMode = 'top';
+    room = { id: `room-${crypto.randomUUID()}`, buildingId: activeBuildingId, name, width, depth,...(cut?{cut}:{}), wallHeight: height, furniture: [] }; rooms.push(room);movingId=null; selectedId = null; homeOpen = false; viewMode = 'top';
   } else if (editorMode === 'edit-room') {
-    const resized = { ...room, width, depth, wallHeight: height };
+    const resized = { ...room, width, depth,cut, wallHeight: height };
     const conflicts = room.furniture.filter(f => !WG.valid(WG.pin(f, resized), resized));
     if (conflicts.length) { error.textContent = `Изменения не сохранены. За новыми границами: ${conflicts.map(f => f.name).join(', ')}. Сначала переместите или уменьшите эту мебель либо увеличьте размеры комнаты.`; return; }
     if(room.buildingRect){
       const building=activeBuilding(),base=RoomoryEstate.canonical(building),rect={...room.buildingRect,width:width/base.width,depth:depth/base.depth};
       if(!RoomoryEstate.roomRectValid(rect,building,buildingRooms().filter(r=>r!==room&&r.buildingRect).map(r=>r.buildingRect))){error.textContent='Комната пересекает соседнюю или выходит за контур постройки. Уменьшите размеры.';return;}room.buildingRect=rect;
     }
+    if(cut)room.cut=cut;else delete room.cut;
     Object.assign(room, { name, width, depth, wallHeight: height });
     room.furniture.forEach(f => Object.assign(f, WG.pin(f, room)));
   } else {
     const existing = editorMode === 'edit-furniture' ? currentFurniture() : null;
-    const candidate = WG.pin({ x: existing?.x || 0, y: existing?.y || 0, width, depth, wall, height, elevation }, room);
-    if (!fits(candidate, room)) { error.textContent = 'Мебель не помещается в комнате в этом положении. Уменьшите размеры или сначала переместите её.'; return; }
+    let candidate = WG.pin({ x: existing?.x || 0, y: existing?.y || 0, width, depth, wall, height, elevation }, room);
+    if(!existing&&!fits(candidate,room))candidate=RG.place(candidate,room);
+    if (!candidate||!fits(candidate, room)) { error.textContent = 'Мебель не помещается в комнате в этом положении. Уменьшите размеры или сначала переместите её.'; return; }
     const type = document.querySelector('#edit-type').value;
     if (existing) Object.assign(existing, candidate, { name, type });
-    else { const f = { id: `furniture-${crypto.randomUUID()}`, name, type, ...candidate, rotation: 0, sections: [] }; room.furniture.push(f); selectedId = f.id; }
+    else { const f = { id: `furniture-${crypto.randomUUID()}`, name, type, ...candidate, rotation: 0, sections: [] }; room.furniture.push(f); selectedId = f.id;movingId=f.id; }
   }
   if (!isRoom && wall) { activeWall = wall; }
   dialog.close(); commit('Изменения сохранены в этом браузере.');
@@ -652,7 +668,7 @@ function moveOnWall(f, du, dz) {
   const p = WG.project(f, room);
   const u = snapWithin(p.u + du, WG.length(room, f.wall) - p.span);
   const z = snapWithin(p.z + dz, WG.ceiling(room) - p.height);
-  Object.assign(f, WG.fromWall(f, room, u, z));
+  const next=WG.fromWall(f,room,u,z);if(WG.valid(next,room))Object.assign(f,next);
 }
 function wallButton(wall, className) {
   const button = element('button', className, WG.labels[wall].slice(-1));
@@ -663,7 +679,7 @@ function wallButton(wall, className) {
   return button;
 }
 function drawMiniPlan(container, targetRoom, interactive = true) {
-  container.replaceChildren(); container.style.aspectRatio = `${targetRoom.width} / ${targetRoom.depth}`;
+  container.replaceChildren();container.style.clipPath=targetRoom.cut?RG.clip(targetRoom):''; container.style.aspectRatio = `${targetRoom.width} / ${targetRoom.depth}`;
   targetRoom.furniture.forEach(f => {
     const node = element(interactive ? 'button' : 'span', `mini-object${f.id === selectedId && targetRoom === room ? ' is-selected' : ''}`);
     node.dataset.id = f.id;
@@ -684,7 +700,7 @@ function renderWallView() {
   document.querySelector('.plan-stage').hidden = wallView;
   document.querySelector('.plan-footer').hidden = wallView;
   document.querySelector('#room-title').textContent = wallView ? WG.labels[activeWall] : 'План сверху';
-  document.querySelector('.card-header p').textContent = wallView ? 'Вид из центра комнаты' : `Вид сверху · ${format(room.width)} × ${format(room.depth)} м`;
+  document.querySelector('.card-header p').textContent = wallView ? 'Вид из центра комнаты' : `Вид сверху · длина ${format(room.width)} × ширина ${format(room.depth)} м`;
   const plan = document.querySelector('#floor-plan');
   plan.querySelectorAll('.top-wall').forEach(node => node.remove());
   if (room.id) Object.keys(WG.labels).forEach(wall => plan.append(wallButton(wall, `top-wall side-${wall}`)));
@@ -698,6 +714,7 @@ function renderWallView() {
   elevation.style.aspectRatio = `${span} / ${ceiling}`;
   elevation.style.width = `min(100%, ${400 * span / ceiling}px)`;
   elevation.style.backgroundSize = `${.5 / span * 100}% ${.5 / ceiling * 100}%`;
+  const blocked=RG.blockedWall(room,activeWall);if(blocked){const gap=element('div','wall-cut-gap','Вырез комнаты');gap.style.left=`${blocked.u/span*100}%`;gap.style.width=`${blocked.span/span*100}%`;elevation.append(gap);}
   const objects = room.furniture.filter(f => f.wall === activeWall);
   document.querySelector('#wall-empty').hidden = objects.length > 0;
   document.querySelector('#wall-dimensions').textContent = `${format(span)} × ${format(ceiling)} м`;
@@ -739,7 +756,7 @@ function attachWallDrag(button, f) {
     const p = WG.project(f, room);
     const u = snapWithin(start.u + dx / start.width * WG.length(room, f.wall), WG.length(room, f.wall) - p.span);
     const z = snapWithin(start.z - dy / start.height * WG.ceiling(room), WG.ceiling(room) - p.height);
-    Object.assign(f, WG.fromWall(f, room, u, z));
+    const next=WG.fromWall(f,room,u,z);if(!WG.valid(next,room))return;Object.assign(f,next);
     selectedId = f.id;
     button.style.left = `${u / WG.length(room, f.wall) * 100}%`; button.style.bottom = `${z / WG.ceiling(room) * 100}%`;
     button.querySelector('.wall-object-height').textContent = `${format(z)} м от пола`; renderDetails();
@@ -780,7 +797,7 @@ function renderHome() {
   document.querySelector('#page-subtitle').textContent = homeOpen ? count : 'План и места хранения';
   document.querySelector('.room-summary>span').textContent = homeOpen ? 'общая площадь комнат' : 'площадь комнаты';
   document.querySelector('#home-summary').textContent = count;
-  document.querySelector('#room-area').textContent = homeOpen ? `${format(ownRooms.reduce((sum, r) => sum + r.width * r.depth, 0))} м²` : `${format(room.width * room.depth)} м²`;
+  document.querySelector('#room-area').textContent = homeOpen ? `${format(ownRooms.reduce((sum, r) => sum + RG.area(r), 0))} м²` : `${format(RG.area(room))} м²`;
   document.querySelector('#breadcrumb-building').textContent = plotOpen ? 'Мой участок' : building.name;
   document.querySelector('#breadcrumb-room').textContent = plotOpen || homeOpen ? 'Обзор' : room.name;
   const floorOverview=document.querySelector('#building-floor-overview');floorOverview.replaceChildren();
@@ -790,7 +807,7 @@ function renderHome() {
   ownRooms.forEach(candidate => {
     const card = element('button', 'home-room-card'); card.type = 'button';
     const preview = element('div', 'home-mini-plan'); preview.setAttribute('aria-hidden', 'true'); drawMiniPlan(preview, candidate, false);
-    card.append(preview, element('h2', '', candidate.name), element('p', '', `${format(candidate.width * candidate.depth)} м² · Мебель: ${candidate.furniture.length} · Вещи: ${candidate.furniture.flatMap(itemsOf).length}`), element('span', 'home-open', 'Открыть комнату ↗'));
+    card.append(preview, element('h2', '', candidate.name), element('p', '', `${format(RG.area(candidate))} м² · Мебель: ${candidate.furniture.length} · Вещи: ${candidate.furniture.flatMap(itemsOf).length}`), element('span', 'home-open', 'Открыть комнату ↗'));
     card.addEventListener('click', () => selectRoom(candidate.id)); overview.append(card);
   });
   if (!ownRooms.length) { const empty = element('div', 'estate-empty'); empty.append(element('h2', '', 'Здесь пока нет комнат'), element('p', '', `Добавьте первую комнату в «${building.name}» кнопкой в меню слева.`)); overview.append(empty); }
@@ -878,7 +895,7 @@ function renderEstate() {
     button.setAttribute('aria-pressed', String(!plotOpen && activeBuildingId === b.id)); nav.append(button);
   });
   document.querySelector('#plot-summary').textContent = `Построек: ${buildings.length} · ${format(plot.width*plot.depth)} м²`;
-  document.querySelector('#plot-dimensions').textContent = `${format(plot.width)} × ${format(plot.depth)} м`;
+  document.querySelector('#plot-dimensions').textContent = `Длина ${format(plot.width)} × ширина ${format(plot.depth)} м`;
   const plan = document.querySelector('#plot-plan'); plan.replaceChildren();
   plan.style.aspectRatio = `${plot.width} / ${plot.depth}`;
   plan.style.width = `min(100%, ${520*plot.width/plot.depth}px)`;
@@ -954,6 +971,7 @@ function drawBuildingRooms(container,b,layout,onSelect,selected=null) {
   layout.forEach((r,index)=>{
     const rect=RoomoryEstate.rotateRect(r.buildingRect,b.rotation),button=estateButton('',()=>onSelect(r.id),'building-room-tile');
     button.dataset.roomId=r.id;button.setAttribute('aria-pressed',String(r.id===selected));
+    if(r.cut)button.style.clipPath=RG.clip(r,b.rotation);
     Object.assign(button.style,{left:`${rect.x*100}%`,top:`${rect.y*100}%`,width:`${rect.width*100}%`,height:`${rect.depth*100}%`});
     button.append(element('span','room-number',String(index+1).padStart(2,'0')),element('strong','',r.name||'Без названия'),element('small','',`${format(rect.width*b.width)} × ${format(rect.depth*b.depth)} м`));
     button.setAttribute('aria-label',`${r.name||'Без названия'}, ${format(rect.width*b.width)} на ${format(rect.depth*b.depth)} м`);container.append(button);
@@ -971,7 +989,7 @@ function showEstateStage(stage) {
   document.querySelectorAll('[data-estate-step]').forEach(node=>node.classList.toggle('is-active',Number(node.dataset.estateStep)===stage));
   document.querySelector('#estate-dialog-title').textContent=roomsStage?'Комнаты постройки':isPlot?'Размеры участка':isNew?'Новая постройка':'Параметры постройки';
   document.querySelector('#save-estate').textContent=roomsStage?'Создать и разместить':isNew?'Далее: комнаты':'Сохранить';
-  document.querySelector('#estate-description').textContent=roomsStage?'Подпишите помещения и разделите их при необходимости. Каждая комната получит свой план мебели и вещей.':isPlot?'Размеры от 5 до 500 м. Все постройки должны помещаться в новых границах.':isNew?'Выберите форму. Все размеры вводятся в одном блоке под схемой. Затем настройте комнаты.':'Все размеры — под схемой. Поворачивайте контур кнопками влево и вправо; буквы размеров поворачиваются вместе с ним.';
+  document.querySelector('#estate-description').textContent=roomsStage?'Подпишите помещения и разделите их при необходимости. Каждая комната получит свой план мебели и вещей.':isPlot?'Размеры от 5 до 500 м. Все постройки должны помещаться в новых границах.':isNew?'Выберите форму. Все размеры вводятся в одном блоке под схемой. Затем настройте комнаты.':'Длина — по горизонтали, ширина — по вертикали. При повороте габариты A и B меняются местами.';
   document.querySelector('#estate-error').textContent='';
   estateDialog.scrollTop=0;
 }
@@ -1022,7 +1040,7 @@ function renderDraftRooms() {
     label.append(input);card.append(label,element('p','',`${format(rect.width*estateNewCandidate.width)} × ${format(rect.depth*estateNewCandidate.depth)} м`));
     const state=roomSplitState(r),controls=element('div','measured-split-fields');
     const axisLabel=element('label','','Направление деления'),axis=element('select');axis.setAttribute('aria-label',`Направление деления комнаты ${index+1}`);
-    [['x','Слева направо ↔'],['y','Сверху вниз ↕']].forEach(([value,text])=>{const option=element('option','',text);option.value=value;axis.append(option);});axis.value=state.axis;axisLabel.append(axis);
+    [['x','По длине ↔'],['y','По ширине ↕']].forEach(([value,text])=>{const option=element('option','',text);option.value=value;axis.append(option);});axis.value=state.axis;axisLabel.append(axis);
     const sizeLabel=element('label','','Первая часть, м'),amount=element('input');amount.type='number';amount.min='.1';amount.step='.1';amount.value=state.amount;amount.setAttribute('aria-label',`Размер первой части комнаты ${index+1}, м`);sizeLabel.append(amount);
     const hint=element('p','split-remainder');
     function updateHint(){const total=roomSplitLength(r,state),value=Number.parseFloat(state.amount);amount.max=String(Number((total-.1).toFixed(6)));hint.textContent=Number.isFinite(value)&&value>=.1-1e-8&&total-value>=.1-1e-8?`От ${state.axis==='x'?'левого':'верхнего'} края: ${format(value)} м. Останется ${format(total-value)} м.`:`Введите от 0,1 до ${format(Math.max(0,total-.1))} м.`;}
@@ -1061,12 +1079,13 @@ document.querySelector('#undo-room-split').addEventListener('click',()=>{if(!dra
 document.querySelector('#redo-room-split').addEventListener('click',()=>{if(!draftRoomRedo.length)return;draftRoomHistory.push(structuredClone(draftRooms));draftRooms=draftRoomRedo.pop();draftRoomSplits=new Map();selectedDraftRoom=draftRooms[0].id;renderDraftRooms();});
 document.querySelector('#back-estate').addEventListener('click',()=>showEstateStage(1));
 
+function shapeBaseSize(){const x=document.querySelector('#estate-width').valueAsNumber,y=document.querySelector('#estate-depth').valueAsNumber;return estateDraftRotation%180?{width:y,depth:x}:{width:x,depth:y};}
 function shapeDraft() {
-  const width=document.querySelector('#estate-width').valueAsNumber, depth=document.querySelector('#estate-depth').valueAsNumber;
+  const {width,depth}=shapeBaseSize();
   return { id:estateEdit, shape:document.querySelector('#building-shape').value, rotation:0,x:0,y:0,width,depth,shapeParams:{c:document.querySelector('#shape-c').valueAsNumber/width,d:document.querySelector('#shape-d').valueAsNumber/depth,e:document.querySelector('#shape-e').valueAsNumber/width} };
 }
 function resetShapeDimensions(b=null) {
-  const width=document.querySelector('#estate-width').valueAsNumber,depth=document.querySelector('#estate-depth').valueAsNumber;
+  const {width,depth}=shapeBaseSize();
   const shape=document.querySelector('#building-shape').value,p=RoomoryEstate.parameters(b||{shape});
   document.querySelector('#shape-c').value=Number((width*p.c).toFixed(2));
   document.querySelector('#shape-d').value=Number((depth*p.d).toFixed(2));
@@ -1075,11 +1094,11 @@ function resetShapeDimensions(b=null) {
 }
 function renderShapePreview() {
   if(estateEdit==='plot')return;
-  const b=shapeDraft(),complex=b.shape!=='rectangle';
+  const b=shapeDraft(),complex=b.shape!=='rectangle',odd=estateDraftRotation%180!==0;
   document.querySelector('#shape-extra-fields').hidden=!complex;
   document.querySelector('#shape-e-label').hidden=b.shape!=='u';
-  document.querySelector('#shape-c-caption').textContent=b.shape==='t'?'C · Ширина ножки, м':'C · Левое крыло, м';
-  document.querySelector('#shape-d-caption').textContent=b.shape==='t'?'D · Глубина перекладины, м':'D · Нижнее крыло, м';
+  document.querySelector('#shape-c-caption').textContent=`C · ${odd?'Ширина':'Длина'} ${b.shape==='t'?'ножки':'левого крыла'} ${odd?'↕':'↔'}, м`;
+  document.querySelector('#shape-d-caption').textContent=`D · ${odd?'Длина':'Ширина'} ${b.shape==='t'?'перекладины':'нижнего крыла'} ${odd?'↔':'↕'}, м`;document.querySelector('#shape-e-label span').textContent=`E · ${odd?'Ширина':'Длина'} правого крыла ${odd?'↕':'↔'}, м`;
   const preview=document.querySelector('#shape-preview');preview.replaceChildren();
   if(![b.width,b.depth].every(n=>Number.isFinite(n)&&n>=1&&n<=500)||!RoomoryEstate.validParameters(b)){
     preview.append(element('p','shape-invalid','Укажите внешние размеры от 1 м. Крылья должны быть не меньше 0,1 м; между ними должен оставаться вырез.'));
@@ -1088,35 +1107,35 @@ function renderShapePreview() {
   const ns='http://www.w3.org/2000/svg';
   const svgNode=(tag,attrs={},text)=>{const n=document.createElementNS(ns,tag);Object.entries(attrs).forEach(([k,v])=>n.setAttribute(k,v));if(text!==undefined)n.textContent=text;return n;};
   document.querySelector('#draft-rotation').textContent=`${estateDraftRotation}°`;
-  const svg=svgNode('svg',{viewBox:'0 0 400 350',role:'group','aria-label':'Размеры выбранной формы: A — ширина, B — длина, C, D и E — размеры крыльев'});
+  const svg=svgNode('svg',{viewBox:'0 0 400 350',role:'group','aria-label':'Размеры выбранной формы: A — длина, B — ширина, C, D и E — размеры крыльев'});
   const scene=svgNode('g',{transform:`rotate(${estateDraftRotation} 200 175)`});svg.append(scene);
-  const scale=Math.min(220/b.width,180/b.depth),w=b.width*scale,h=b.depth*scale,x=70+(220-w)/2,y=75+(180-h)/2;
+  const viewLength=odd?b.depth:b.width,viewWidth=odd?b.width:b.depth,scale=Math.min(220/viewLength,180/viewWidth),w=b.width*scale,h=b.depth*scale,x=200-w/2,y=175-h/2,vw=viewLength*scale,vh=viewWidth*scale,vx=200-vw/2,vy=175-vh/2;
   RoomoryEstate.parts(b).forEach(p=>scene.append(svgNode('rect',{x:x+p.x*scale,y:y+p.y*scale,width:p.width*scale,height:p.depth*scale,class:'shape-preview-part'})));
   const active=document.activeElement.id;
-  function measure(letter,inputId,x1,y1,x2,y2,value,tx,ty){
+  function measure(letter,inputId,x1,y1,x2,y2,value,tx,ty,fixed=false){
     const g=svgNode('g',{class:`shape-measure${active===inputId?' is-active':''}`,role:'button',tabindex:'0','aria-label':`${letter}: ${format(value)} м, изменить`});
     g.append(svgNode('line',{x1,y1,x2,y2}),svgNode('circle',{cx:x1,cy:y1,r:3}),svgNode('circle',{cx:x2,cy:y2,r:3}));
-    const text=svgNode('text',{x:tx,y:ty,'text-anchor':'middle',transform:`rotate(${-estateDraftRotation} ${tx} ${ty})`},`${letter} · ${format(value)} м`);g.append(text);
-    const focus=()=>document.querySelector(`#${inputId}`).focus({preventScroll:true});g.addEventListener('click',focus);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();focus();}});scene.append(g);
+    const text=svgNode('text',{x:tx,y:ty,'text-anchor':'middle',transform:`rotate(${fixed?0:-estateDraftRotation} ${tx} ${ty})`},`${letter} · ${format(value)} м`);g.append(text);
+    const focus=()=>document.querySelector(`#${inputId}`).focus({preventScroll:true});g.addEventListener('click',focus);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();focus();}});(fixed?svg:scene).append(g);
   }
-  measure('A','estate-width',x,45,x+w,45,b.width,x+w/2,32);
-  measure('B','estate-depth',330,y,330,y+h,b.depth,343,y+h/2+4);
+  measure('A','estate-width',vx,45,vx+vw,45,viewLength,200,32,true);
+  measure('B','estate-depth',340,vy,340,vy+vh,viewWidth,355,175,true);
   if(complex){
     const {c,d,e}=b.shapeParams;
     const cx=b.shape==='t'?x+w*(1-c)/2:x;
-    measure('C','shape-c',cx,282,cx+w*c,282,c*b.width,cx+w*c/2,305);
+    measure('C','shape-c',cx,y+h+22,cx+w*c,y+h+22,c*b.width,cx+w*c/2,y+h+43);
     const dy=b.shape==='t'?y:y+h*(1-d);
-    measure('D','shape-d',40,dy,40,dy+h*d,d*b.depth,30,dy+h*d/2+4);
-    if(b.shape==='u')measure('E','shape-e',x+w*(1-e),282,x+w,282,e*b.width,x+w*(1-e/2),328);
+    measure('D','shape-d',x-22,dy,x-22,dy+h*d,d*b.depth,x-35,dy+h*d/2+4);
+    if(b.shape==='u')measure('E','shape-e',x+w*(1-e),y+h+22,x+w,y+h+22,e*b.width,x+w*(1-e/2),y+h+64);
   }
   preview.append(svg);
-  document.querySelector('#shape-help').textContent=complex?'A и B — внешний контур. '+(b.shape==='u'?'C, D и E':'C и D')+' — размеры крыльев. Выбранный размер подсвечивается на схеме.':'A — ширина, B — длина. Меняйте поля: схема обновляется сразу.';
+  document.querySelector('#shape-help').textContent=complex?'A и B — внешний контур. '+(b.shape==='u'?'C, D и E':'C и D')+' — размеры крыльев. Выбранный размер подсвечивается на схеме.':'A — длина, B — ширина. Меняйте поля: схема обновляется сразу.';
 }
 for(const id of ['estate-width','estate-depth','shape-c','shape-d','shape-e']){
   const input=document.querySelector(`#${id}`);input.addEventListener('input',renderShapePreview);input.addEventListener('focus',renderShapePreview);
 }
 document.querySelector('#building-shape').addEventListener('change',()=>resetShapeDimensions());
-for(const [id,delta] of [['rotate-draft-left',-90],['rotate-draft-right',90]])document.querySelector(`#${id}`).addEventListener('click',()=>{estateDraftRotation=(estateDraftRotation+delta+360)%360;renderShapePreview();});
+for(const [id,delta] of [['rotate-draft-left',-90],['rotate-draft-right',90]])document.querySelector(`#${id}`).addEventListener('click',()=>{const x=document.querySelector('#estate-width'),y=document.querySelector('#estate-depth'),previous=x.value;x.value=y.value;y.value=previous;estateDraftRotation=(estateDraftRotation+delta+360)%360;renderShapePreview();});
 function rotateBuilding(b,direction) {
   const candidate={...b,width:b.depth,depth:b.width,rotation:(b.rotation+direction+360)%360};
   if(!RoomoryEstate.valid(candidate,plot,buildings)){notify('Для поворота не хватает места. Сначала передвиньте постройку.');return;}
@@ -1132,11 +1151,11 @@ function openEstate(id) {
   document.querySelector('#building-fields').hidden=isPlot;document.querySelector('#building-position').hidden=isPlot||!b;
   document.querySelector('#shape-designer').hidden=false;
   document.querySelector('.shape-preview-heading').hidden=isPlot;document.querySelector('#shape-preview').hidden=isPlot;document.querySelector('#shape-rotation-controls').hidden=isPlot;document.querySelector('#shape-help').hidden=isPlot;document.querySelector('#shape-extra-fields').hidden=isPlot;
-  document.querySelector('#estate-width-caption').textContent=isPlot?'Ширина, м':'A · Общая ширина, м';
-  document.querySelector('#estate-depth-caption').textContent=isPlot?'Длина, м':'B · Общая длина, м';
+  document.querySelector('#estate-width-caption').textContent=isPlot?'Длина ↔, м':'A · Общая длина ↔, м';
+  document.querySelector('#estate-depth-caption').textContent=isPlot?'Ширина ↕, м':'B · Общая ширина ↕, м';
   document.querySelector('#estate-dialog').classList.toggle('has-shape-designer',!isPlot);
   document.querySelector('#building-name').value=b?.name||'';document.querySelector('#building-kind').value=b?.kind||'shed';document.querySelector('#building-shape').value=b?.shape||'rectangle';
-  document.querySelector('#estate-width').value=isPlot?plot.width:odd?draft.depth:draft.width;document.querySelector('#estate-depth').value=isPlot?plot.depth:odd?draft.width:draft.depth;
+  document.querySelector('#estate-width').value=isPlot?plot.width:draft.width;document.querySelector('#estate-depth').value=isPlot?plot.depth:draft.depth;
   document.querySelector('#building-x').value=draft.x;document.querySelector('#building-y').value=draft.y;
   document.querySelector('#estate-error').textContent='';
   if(!isPlot)resetShapeDimensions(b);
@@ -1163,7 +1182,7 @@ document.querySelector('#estate-form').addEventListener('submit',event=>{
     const rotation=estateDraftRotation,odd=rotation%180!==0;
     const draft=shapeDraft();
     if(![width,depth].every(n=>Number.isFinite(n)&&n>=1&&n<=500)||!RoomoryEstate.validParameters(draft)){error.textContent='Проверьте размеры на схеме: внешний контур от 1 м, крылья от 0,1 м, с непустым вырезом.';return;}
-    let candidate={id:existing?.id||`building-${crypto.randomUUID()}`,name,kind:document.querySelector('#building-kind').value,shape:draft.shape,...(draft.shape!=='rectangle'?{shapeParams:draft.shapeParams}:{}),x:document.querySelector('#building-x').valueAsNumber,y:document.querySelector('#building-y').valueAsNumber,width:odd?depth:width,depth:odd?width:depth,rotation};
+    let candidate={id:existing?.id||`building-${crypto.randomUUID()}`,name,kind:document.querySelector('#building-kind').value,shape:draft.shape,...(draft.shape!=='rectangle'?{shapeParams:draft.shapeParams}:{}),x:document.querySelector('#building-x').valueAsNumber,y:document.querySelector('#building-y').valueAsNumber,width,depth,rotation};
     if(!existing){candidate=RoomoryEstate.centered(candidate,plot,buildings);if(!candidate){error.textContent='На участке нет свободного места для этой формы. Уменьшите размеры или освободите место.';return;}}
     if(buildings.some(b=>b.id!==candidate.id&&b.name.toLocaleLowerCase('ru')===name.toLocaleLowerCase('ru'))){error.textContent='Постройка с таким названием уже есть.';return;}
     if(!RoomoryEstate.valid(candidate,plot,buildings)){error.textContent='Проверьте размеры и положение: минимум 1 м, внутри участка, без пересечения с другими постройками.';return;}
@@ -1171,7 +1190,7 @@ document.querySelector('#estate-form').addEventListener('submit',event=>{
     const updatedRooms=[];
     for(const r of rooms.filter(r=>r.buildingId===existing.id&&r.buildingRect)){
       const base=RoomoryEstate.canonical(candidate),width=Number((r.buildingRect.width*base.width).toFixed(6)),depth=Number((r.buildingRect.depth*base.depth).toFixed(6)),next={...r,width,depth};
-      if(!RoomoryEstate.roomRectValid(r.buildingRect,candidate)||![width,depth].every(n=>n>=.1&&n<=30)||r.furniture.some(f=>!WG.valid(WG.pin(f,next),next))){error.textContent='Новый контур или размеры конфликтуют с комнатами и мебелью. Сначала измените комнаты или освободите их.';return;}
+      if(!RG.validCut(next)||!RoomoryEstate.roomRectValid(r.buildingRect,candidate)||![width,depth].every(n=>n>=.1&&n<=30)||r.furniture.some(f=>!WG.valid(WG.pin(f,next),next))){error.textContent='Новый контур или размеры конфликтуют с комнатами и мебелью. Сначала измените комнаты или освободите их.';return;}
       updatedRooms.push({r,next});
     }
     delete existing.shapeParams;Object.assign(existing,candidate);
@@ -1250,6 +1269,24 @@ document.querySelector('#confirm-start-project').addEventListener('click',()=>{
   rooms.splice(0);buildings.splice(0,buildings.length,...empty.buildings);plot=empty.plot;activeBuildingId='main-house';room=emptyProjectRoom();selectedId=null;movingId=null;foundItemId=null;estateMovingId=null;storageReadFailed=false;hasSavedProject=true;viewMode='top';homeOpen=true;plotOpen=false;
   search.value='';results.hidden=true;document.querySelector('#search-status').textContent='';document.querySelector('#storage-status').hidden=true;startProjectDialog.close();renderRoom();notify('Пустой проект создан. Добавьте первую комнату кнопкой слева.');
 });
+
+function roomCutFromEditor(){const corner=document.querySelector('#room-cut-corner').value;return corner?{corner,length:document.querySelector('#room-cut-length').valueAsNumber,width:document.querySelector('#room-cut-width').valueAsNumber}:null;}
+function renderRoomCutPreview(){
+  if(!editorMode?.endsWith('room'))return;
+  const cut=roomCutFromEditor(),preview=document.querySelector('#room-cut-preview');document.querySelector('#room-cut-dimensions').hidden=!cut;preview.replaceChildren();
+  const candidate={width:document.querySelector('#edit-width').valueAsNumber,depth:document.querySelector('#edit-depth').valueAsNumber,cut};
+  if(![candidate.width,candidate.depth].every(n=>Number.isFinite(n)&&n>0)||!RG.validCut(candidate)){preview.append(element('p','cut-preview-error','Вырез должен оставлять не менее 0,1 м по длине и ширине комнаты.'));return;}
+  const canvas=element('div','cut-preview-canvas');canvas.style.aspectRatio=`${candidate.width}/${candidate.depth}`;canvas.style.width=`min(100%,${180*candidate.width/candidate.depth}px)`;
+  const silhouette=element('div','cut-preview-shape');silhouette.style.clipPath=RG.clip(candidate);canvas.append(silhouette);
+  const dims=element('p','cut-preview-size',`Длина ↔ ${format(candidate.width)} м · ширина ↕ ${format(candidate.depth)} м · площадь ${format(RG.area(candidate))} м²`);preview.append(canvas,dims);
+}
+for(const id of ['room-cut-corner','room-cut-length','room-cut-width','edit-width','edit-depth'])document.querySelector(`#${id}`).addEventListener('input',renderRoomCutPreview);
+document.querySelector('#room-cut-corner').addEventListener('change',renderRoomCutPreview);
+function bedPlanArtwork(rotation){
+  const art=element('span','bed-art');art.setAttribute('aria-hidden','true');
+  art.innerHTML=`<svg viewBox="0 0 100 100" preserveAspectRatio="none"><g transform="rotate(${rotation} 50 50)"><rect x="2" y="2" width="96" height="96" rx="4" fill="#eee4cc" stroke="#baa77d"/><rect x="3" y="3" width="94" height="8" rx="2" fill="#cbb98c"/><rect x="7" y="15" width="39" height="15" rx="4" fill="#fff9e8" stroke="#d9cdad"/><rect x="54" y="15" width="39" height="15" rx="4" fill="#fff9e8" stroke="#d9cdad"/><rect x="5" y="34" width="90" height="60" rx="3" fill="#d9ddbd" stroke="#bbc59f"/><path d="M6 45h88" stroke="#c2cba9"/></g></svg>`;
+  return art;
+}
 
 const requestedView = new URLSearchParams(location.search);
 const requestedRoom = rooms.find(candidate => candidate.id === requestedView.get('room'));

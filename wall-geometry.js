@@ -1,5 +1,6 @@
 'use strict';
 const RoomoryWallGeometry = (() => {
+  const rooms=typeof module!=='undefined'?require('./room-geometry.js'):RoomoryRoomGeometry;
   const labels = { north: 'Стена A', east: 'Стена B', south: 'Стена C', west: 'Стена D' };
   const furnitureCatalog=typeof module!=='undefined'?require('./furniture.js'):RoomoryFurniture;
   const heightOf = f => f.height ?? furnitureCatalog.catalog[f.type]?.height ?? 1;
@@ -28,7 +29,7 @@ const RoomoryWallGeometry = (() => {
   }
   function valid(f, r) {
     const z = f.elevation ?? 0, h = heightOf(f);
-    return Number.isFinite(h) && h >= .05 && Number.isFinite(z) && z >= 0 && z + h <= ceiling(r) + 1e-8 && f.x >= -1e-8 && f.y >= -1e-8 && f.x + f.width <= r.width + 1e-8 && f.y + f.depth <= r.depth + 1e-8;
+    return Number.isFinite(h) && h >= .05 && Number.isFinite(z) && z >= 0 && z + h <= ceiling(r) + 1e-8 && rooms.contains(f,r);
   }
   return { labels, heightOf, ceiling, length, project, pin, fromWall, valid };
 })();

@@ -4,6 +4,7 @@
 const RoomoryData = (() => {
   const walls = typeof module !== 'undefined' ? require('./wall-geometry.js') : RoomoryWallGeometry;
   const estate = typeof module !== 'undefined' ? require('./estate.js') : RoomoryEstate;
+  const roomGeometry=typeof module!=='undefined'?require('./room-geometry.js'):RoomoryRoomGeometry;
   const MAX_BYTES = 5 * 1024 * 1024;
   const furnitureCatalog=typeof module!=='undefined'?require('./furniture.js'):RoomoryFurniture;
   const types = new Set(furnitureCatalog.types);
@@ -44,6 +45,7 @@ const RoomoryData = (() => {
       const where = `Комната ${ri + 1}`;
       if (!object(r)) fail(`${where}: неверная запись.`);
       const result = { id: id(r.id, where), name: text(r.name, 60, where), width: size(r.width, where), depth: size(r.depth, where) };
+      if(r.cut!=null){if(!object(r.cut))fail(`${where}: неверный вырез.`);result.cut={corner:r.cut.corner,length:r.cut.length,width:r.cut.width};if(!roomGeometry.validCut(result))fail(`${where}: вырез должен оставлять не менее 0,1 м с каждой стороны.`);}
       result.buildingId = r.buildingId ?? 'main-house';
       if (!buildings.some(b => b.id === result.buildingId)) fail(`${where}: постройка не найдена.`);
       if(r.buildingRect !== undefined) {
@@ -62,7 +64,7 @@ const RoomoryData = (() => {
         if (![0, 90, 180, 270].includes(f.rotation)) fail(`${place}: угол должен быть 0, 90, 180 или 270°.`);
         item.wall = f.wall ?? null; item.height = f.height ?? walls.heightOf(f); item.elevation = f.elevation ?? 0;
         if (item.wall !== null && !Object.hasOwn(walls.labels, item.wall)) fail(`${place}: неизвестная стена.`);
-        if (!walls.valid(item, result)) fail(`${place}: неверная высота или мебель выходит за высоту стены.`);
+        if (!walls.valid(item, result)) fail(`${place}: мебель выходит за контур комнаты, попадает в вырез или не помещается по высоте.`);
         if (item.wall) { const pinned = walls.pin(item, result); if (Math.abs(pinned.x - item.x) > 1e-6 || Math.abs(pinned.y - item.y) > 1e-6) fail(`${place}: положение мебели не совпадает с выбранной стеной.`); }
         const names = new Set(); let systemCount = 0;
         item.sections = list(f.sections, 200, place).map((s, si) => {
