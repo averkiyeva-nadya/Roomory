@@ -58,9 +58,11 @@ const STORAGE_KEY = 'roomory.project.v1';
 let selectedId = 'wardrobe';
 let foundItemId = null;
 let storageReadFailed = false;
+let hasSavedProject = false;
 try {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw !== null) {
+    hasSavedProject = true;
     const saved = RoomoryData.parse(raw);
     plot = saved.plot; buildings.splice(0, buildings.length, ...saved.buildings); activeBuildingId = saved.activeBuildingId;
     rooms.splice(0, rooms.length, ...saved.rooms);
@@ -292,7 +294,7 @@ search.addEventListener('keydown', event => {
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') results.hidden = true;
-  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open && !document.querySelector('#content-dialog').open && !document.querySelector('#import-dialog').open && !document.querySelector('#genius-dialog').open && !document.querySelector('#estate-dialog').open) { event.preventDefault(); search.focus(); }
+  if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !event.ctrlKey && !event.metaKey && !event.altKey && !document.querySelector('#editor-dialog').open && !document.querySelector('#content-dialog').open && !document.querySelector('#import-dialog').open && !document.querySelector('#genius-dialog').open && !document.querySelector('#estate-dialog').open && !document.querySelector('#start-project-dialog').open) { event.preventDefault(); search.focus(); }
 });
 document.addEventListener('click', event => { if (!event.target.closest('.search-section')) results.hidden = true; });
 function selectRoom(id) {
@@ -1213,7 +1215,7 @@ function renderRoomInventory() {
   const content=document.querySelector('#inventory-content');content.replaceChildren();
   if(!rows.length){content.append(element('p','inventory-empty','В этой комнате пока нет вещей. Добавьте их в мебель — они появятся здесь.'));return;}
   const wrap=element('div','inventory-table-wrap'),table=element('table','inventory-table'),head=element('thead'),header=element('tr');
-  ['Вещь','Кол-во','Мебель','Полка / отделение','Заметка'].forEach(name=>{const th=element('th','',name);th.scope='col';header.append(th);});head.append(header);table.append(head);
+  ['Вещь','Кол-во','Мебель','Полка / отделение','Заметка','Действия'].forEach(name=>{const th=element('th','',name);th.scope='col';header.append(th);});head.append(header);table.append(head);
   const body=element('tbody');
   rows.forEach(({f,s,i})=>{
     const row=element('tr');
@@ -1222,9 +1224,32 @@ function renderRoomInventory() {
       movingId=null;selectedId=f.id;viewMode=f.wall?'wall':'top';if(f.wall)activeWall=f.wall;renderRoom();selectFurniture(f.id,i.id);
       document.querySelector('.item.is-found')?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});
     });button.setAttribute('aria-label',`Найти в комнате: ${i.name}, ${f.name}, ${s.name}`);name.append(button);row.append(name);
-    [[`${i.quantity} шт.`,'Количество','inventory-quantity'],[f.name,'Мебель','inventory-furniture'],[s.name,'Место','inventory-place'],[i.note||'—','Заметка','inventory-note']].forEach(([value,label,className])=>{const cell=element('td',className,value);cell.dataset.label=label;row.append(cell);});body.append(row);
+    [[`${i.quantity} шт.`,'Количество','inventory-quantity'],[f.name,'Мебель','inventory-furniture'],[s.name,'Место','inventory-place'],[i.note||'—','Заметка','inventory-note']].forEach(([value,label,className])=>{const cell=element('td',className,value);cell.dataset.label=label;row.append(cell);});
+    const actions=element('td','inventory-actions');actions.dataset.label='Действия';
+    const edit=estateButton('Изменить',()=>{selectFurniture(f.id);openContent('item',i,s);const quantity=document.querySelector('#content-quantity');quantity.focus();quantity.select();},'inventory-edit');
+    edit.setAttribute('aria-label',`Изменить количество: ${i.name}, ${f.name}, ${s.name}`);actions.append(edit);row.append(actions);body.append(row);
   });table.append(body);wrap.append(table);content.append(wrap);
 }
+
+const startProjectDialog=document.querySelector('#start-project-dialog');
+let isFirstProjectStart=false;
+function openProjectStart(first=false){
+  isFirstProjectStart=first;
+  document.querySelector('#start-project-title').textContent=first?'Ваше пространство начинается здесь':'Создать новый проект?';
+  document.querySelector('#start-project-description').textContent=first?'Создайте свои комнаты и участок с нуля или сначала посмотрите готовый пример.':'Текущие комнаты, мебель, вещи и постройки будут заменены пустым проектом. Сохраните резервную копию, если они вам нужны.';
+  document.querySelector('#start-project-export').hidden=first;
+  document.querySelector('#cancel-start-project').textContent=first?'Посмотреть пример':'Отмена';
+  document.querySelector('#start-project-error').textContent='';startProjectDialog.showModal();document.querySelector('#confirm-start-project').focus();
+}
+document.querySelector('#new-project').addEventListener('click',()=>openProjectStart());
+document.querySelector('#start-project-export').addEventListener('click',exportProject);
+document.querySelector('#cancel-start-project').addEventListener('click',()=>{if(isFirstProjectStart)saveSelection();startProjectDialog.close();});
+document.querySelector('#confirm-start-project').addEventListener('click',()=>{
+  const empty=RoomoryData.validate({version:1,...RoomoryEstate.defaults(),activeBuildingId:'main-house',rooms:[],roomId:null,selectedId:null});
+  try{localStorage.setItem(STORAGE_KEY,JSON.stringify(empty));}catch{document.querySelector('#start-project-error').textContent='Браузер не смог сохранить новый проект. Текущий проект не заменён.';return;}
+  rooms.splice(0);buildings.splice(0,buildings.length,...empty.buildings);plot=empty.plot;activeBuildingId='main-house';room=emptyProjectRoom();selectedId=null;movingId=null;foundItemId=null;estateMovingId=null;storageReadFailed=false;hasSavedProject=true;viewMode='top';homeOpen=true;plotOpen=false;
+  search.value='';results.hidden=true;document.querySelector('#search-status').textContent='';document.querySelector('#storage-status').hidden=true;startProjectDialog.close();renderRoom();notify('Пустой проект создан. Добавьте первую комнату кнопкой слева.');
+});
 
 const requestedView = new URLSearchParams(location.search);
 const requestedRoom = rooms.find(candidate => candidate.id === requestedView.get('room'));
@@ -1238,3 +1263,4 @@ if (requestedView.get('view') === 'wall' && room.id) {
 if (requestedView.get('view') === 'home') homeOpen = true;
 if (requestedView.get('view') === 'plot') plotOpen = true;
 renderRoom();
+if(!hasSavedProject && !storageReadFailed)openProjectStart(true);
